@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:permission_handler/permission_handler.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'transport.dart';
 
@@ -9,13 +8,6 @@ const kBg = Color(0xFF07070D);
 const kCard = Color(0xFF16171F);
 const kBubble = Color(0xFF1E2029);
 const kBlue = Color(0xFF2E6BFF);
-const kPurple = Color(0xFF9B3BFF);
-
-const kGradient = LinearGradient(
-  colors: [kBlue, kPurple],
-  begin: Alignment.topLeft,
-  end: Alignment.bottomRight,
-);
 
 class BitmeApp extends StatelessWidget {
   const BitmeApp({super.key});
