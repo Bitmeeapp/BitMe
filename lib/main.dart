@@ -15,8 +15,7 @@ void main() => runApp(const BitmeApp());
 // ---------------------------------------------------------------- config
 
 const kBuild = int.fromEnvironment('BUILD', defaultValue: 0);
-const kRepo = 'Bitmeeapp/BitMe'; // GitHub repo (update + share link)
-const kShareLink = 'https://github.com/$kRepo';
+const kRepo = 'Bitmeeapp/BitMe'; // GitHub repo
 
 const kBg = Color(0xFF07070D);
 const kCard = Color(0xFF16171F);
@@ -56,7 +55,7 @@ class BitmeApp extends StatelessWidget {
 String fmtTime(DateTime d) {
   final h = d.hour % 12 == 0 ? 12 : d.hour % 12;
   final m = d.minute.toString().padLeft(2, '0');
-  return '$h:$m${d.hour >= 12 ? 'PM' : 'AM'}';
+  return '$h:$m ${d.hour >= 12 ? 'PM' : 'AM'}';
 }
 
 Future<String?> askText(BuildContext c, String title, {String initial = '', String hint = '', String ok = 'Save'}) {
@@ -339,7 +338,7 @@ class BtTransport extends Transport {
   }
 }
 
-/// Same WiFi (UDP broadcast for discovery, UDP unicast for messages)
+/// Same WiFi (UDP broadcast)
 class WifiTransport extends Transport {
   static const _port = 45454;
   final _uid = Random().nextInt(1 << 30).toString();
@@ -402,5 +401,295 @@ class WifiTransport extends Transport {
   }
 
   void _prune() {
-    final old = _seen.entries
-     
+    final old = _seen.entries.where((e) => DateTime.now().difference(e.value).inSeconds > 12).map((e) => e.key).toList();
+    for (final u in old) {
+      _seen.remove(u);
+      _names.remove(u);
+      _ips.remove(u);
+    }
+    if (old.isNotEmpty) notifyListeners();
+  }
+
+  @override
+  void send(Peer p, String text) {
+    addMsg(p.id, Msg(text, true));
+    final ip = _ips[p.id];
+    if (ip != null) _tx(ip, {'t': 'm', 'x': text});
+  }
+
+  @override
+  void stop() {
+    _timer?.cancel();
+    _sock?.close();
+    _sock = null;
+    _names.clear();
+    _ips.clear();
+    _seen.clear();
+  }
+}
+
+// ---------------------------------------------------------------- screens
+
+class Boot extends StatefulWidget {
+  const Boot({super.key});
+
+  @override
+  State<Boot> createState() => _BootState();
+}
+
+class _BootState extends State<Boot> {
+  String? _name;
+  bool _loaded = false;
+
+  @override
+  void initState() {
+    super.initState();
+    SharedPreferences.getInstance().then((p) {
+      setState(() {
+        _name = p.getString('username');
+        _loaded = true;
+      });
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (!_loaded) return const Scaffold();
+    return _name == null ? const WelcomeScreen() : Shell(me: _name!);
+  }
+}
+
+class WelcomeScreen extends StatefulWidget {
+  const WelcomeScreen({super.key});
+
+  @override
+  State<WelcomeScreen> createState() => _WelcomeScreenState();
+}
+
+class _WelcomeScreenState extends State<WelcomeScreen> {
+  final _c = TextEditingController();
+
+  Future<void> _save() async {
+    final n = _c.text.trim();
+    if (n.isEmpty) return;
+    final p = await SharedPreferences.getInstance();
+    await p.setString('username', n);
+    if (!mounted) return;
+    Navigator.pushReplacement(context, MaterialPageRoute(builder: (_) => Shell(me: n)));
+  }
+
+  @override
+  Widget build(BuildContext context) => Scaffold(
+        body: Container(
+          decoration: const BoxDecoration(
+            gradient: RadialGradient(center: Alignment(0, -.45), radius: 1.0, colors: [Color(0xFF241466), kBg]),
+          ),
+          child: SafeArea(
+            child: Padding(
+              padding: const EdgeInsets.all(28),
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  ClipRRect(
+                    borderRadius: BorderRadius.circular(28),
+                    child: Image.asset(
+                      'assets/icon.png',
+                      width: 120,
+                      height: 120,
+                      fit: BoxFit.cover,
+                      errorBuilder: (_, __, ___) => Container(
+                        width: 120,
+                        height: 120,
+                        decoration: BoxDecoration(gradient: kGradient, borderRadius: BorderRadius.circular(28)),
+                        child: const Icon(Icons.offline_bolt_rounded, size: 64, color: Colors.white),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 22),
+                  const Text('Bitme', style: TextStyle(fontSize: 40, fontWeight: FontWeight.bold)),
+                  const SizedBox(height: 8),
+                  const Text('Connect • Chat • Share • Be You', style: TextStyle(color: Colors.white70)),
+                  const SizedBox(height: 40),
+                  TextField(
+                    controller: _c,
+                    maxLength: 20,
+                    textInputAction: TextInputAction.done,
+                    onSubmitted: (_) => _save(),
+                    decoration: InputDecoration(
+                      hintText: 'Apna username likho',
+                      counterText: '',
+                      filled: true,
+                      fillColor: kCard,
+                      prefixIcon: const Icon(Icons.alternate_email),
+                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(27), borderSide: BorderSide.none),
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  GradientButton(text: 'Get Started', onTap: _save),
+                ],
+              ),
+            ),
+          ),
+        ),
+      );
+}
+
+enum Mode { bluetooth, wifi }
+
+class Shell extends StatefulWidget {
+  final String me;
+  const Shell({super.key, required this.me});
+
+  @override
+  State<Shell> createState() => _ShellState();
+}
+
+class _ShellState extends State<Shell> {
+  final _sk = GlobalKey<ScaffoldState>();
+  final _bt = BtTransport();
+  final _wifi = WifiTransport();
+  Mode _mode = Mode.bluetooth;
+  int _tab = 0;
+  String _q = '';
+  late String _me = widget.me;
+
+  Transport get t => _mode == Mode.bluetooth ? _bt : _wifi;
+
+  @override
+  void initState() {
+    super.initState();
+    t.start(_me);
+  }
+
+  @override
+  void dispose() {
+    _bt.dispose();
+    _wifi.dispose();
+    super.dispose();
+  }
+
+  void _snack(String s) => ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(s)));
+
+  void _restart() {
+    t.stop();
+    t.error = null;
+    t.needSettings = false;
+    t.refresh();
+    t.start(_me);
+  }
+
+  void _setMode(Mode m) {
+    if (m == _mode) return;
+    t.stop();
+    setState(() => _mode = m);
+    t.error = null;
+    t.needSettings = false;
+    t.start(_me);
+  }
+
+  Future<void> _open(Peer p) async {
+    if (!p.connected) {
+      _snack('${p.name} se connect ho raha hai...');
+      final ok = await t.connect(p);
+      if (!ok) return _snack('Connect nahi hua, dobara try karo');
+    }
+    if (!mounted) return;
+    Navigator.push(context, MaterialPageRoute(builder: (_) => ChatScreen(t: t, peer: Peer(p.id, p.name, true))));
+  }
+
+  Future<void> _rename() async {
+    final n = await askText(context, 'Username badlo', initial: _me);
+    if (n == null || n.isEmpty || n == _me) return;
+    final p = await SharedPreferences.getInstance();
+    await p.setString('username', n);
+    setState(() => _me = n);
+    _restart();
+  }
+
+  Widget _errorView() {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(Icons.warning_amber_rounded, size: 50, color: Colors.orangeAccent),
+            const SizedBox(height: 12),
+            Text(t.error ?? 'Kuch problem hui', textAlign: TextAlign.center, style: const TextStyle(fontSize: 16)),
+            const SizedBox(height: 20),
+            ElevatedButton(
+              onPressed: () {
+                if (t.needSettings) {
+                  openAppSettings();
+                } else {
+                  _restart();
+                }
+              },
+              child: Text(t.needSettings ? 'Settings Kholo' : 'Dobara try karo'),
+            )
+          ],
+        ),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) => Scaffold(
+        key: _sk,
+        body: SafeArea(child: _tab == 0 ? _messages() : _profile()),
+        bottomNavigationBar: _nav(),
+      );
+
+  Widget _messages() {
+    return Column(
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(20, 12, 16, 8),
+          child: Row(
+            children: [
+              const Text('Messages', style: TextStyle(fontSize: 28, fontWeight: FontWeight.bold)),
+              const Spacer(),
+            ],
+          ),
+        ),
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16),
+          child: TextField(
+            onChanged: (v) => setState(() => _q = v),
+            decoration: InputDecoration(
+              hintText: 'Search chats...',
+              prefixIcon: const Icon(Icons.search),
+              filled: true,
+              fillColor: kCard,
+              contentPadding: const EdgeInsets.symmetric(vertical: 14),
+              border: OutlineInputBorder(borderRadius: BorderRadius.circular(18), borderSide: BorderSide.none),
+            ),
+          ),
+        ),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 14, 16, 6),
+          child: Row(
+            children: [
+              _chip('Bluetooth', Icons.bluetooth, Mode.bluetooth),
+              const SizedBox(width: 10),
+              _chip('WiFi', Icons.wifi, Mode.wifi),
+            ],
+          ),
+        ),
+        Expanded(
+          child: ListenableBuilder(
+            listenable: t,
+            builder: (_, __) {
+              if (t.error != null) return _errorView();
+              final ps = t.peers.where((p) => p.name.toLowerCase().contains(_q.toLowerCase())).toList();
+              ps.sort((a, b) {
+                final la = t.chats[a.id]?.last.at;
+                final lb = t.chats[b.id]?.last.at;
+                if (la != null && lb != null) return lb.compareTo(la);
+                if (la != null) return -1;
+                if (lb != null) return 1;
+                return a.name.compareTo(b.name);
+              });
+
+              if (ps.isEmpty) {
+             
