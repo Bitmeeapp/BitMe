@@ -7,11 +7,14 @@ import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:nearby_connections/nearby_connections.dart';
 import 'package:permission_handler/permission_handler.dart';
+import 'package:share_plus/share_plus.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 void main() => runApp(const BitmeApp());
 
 const kAccent = Color(0xFF3A5BFF);
+// Share button me ye link jaata hai. Apna link yahan badal sakte ho.
+const kShareLink = 'https://github.com/Bitmeeapp/BitMe';
 
 class BitmeApp extends StatelessWidget {
   const BitmeApp({super.key});
@@ -46,6 +49,7 @@ class Msg {
 abstract class Transport extends ChangeNotifier {
   final chats = <String, List<Msg>>{};
   String? error;
+  bool needSettings = false;
   bool _dead = false;
 
   Future<bool> start(String me);
@@ -99,6 +103,18 @@ class BtTransport extends Transport {
         Permission.bluetoothConnect,
         Permission.nearbyWifiDevices,
       ].request();
+      if (!await Permission.location.isGranted) {
+        error = 'Bluetooth ke liye Location permission zaroori hai.\n\n'
+            'Settings kholo → Permissions → Location → Allow karo, phir wapas aakar "Dobara try karo" dabao.';
+        needSettings = true;
+        notifyListeners();
+        return false;
+      }
+      if (!await Permission.location.serviceStatus.isEnabled) {
+        error = 'Phone ki Location (GPS) ON karo, phir "Dobara try karo" dabao.';
+        notifyListeners();
+        return false;
+      }
       await Nearby().startAdvertising(me, Strategy.P2P_CLUSTER,
           onConnectionInitiated: _init,
           onConnectionResult: _result,
@@ -352,9 +368,34 @@ class _SetupScreenState extends State<SetupScreen> {
 
 enum Mode { bluetooth, wifi }
 
-class HomeScreen extends StatelessWidget {
+class HomeScreen extends StatefulWidget {
   final String me;
   const HomeScreen({super.key, required this.me});
+  @override
+  State<HomeScreen> createState() => _HomeScreenState();
+}
+
+class _HomeScreenState extends State<HomeScreen> {
+  late String _me = widget.me;
+
+  Future<void> _rename() async {
+    final c = TextEditingController(text: _me);
+    final n = await showDialog<String>(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: const Text('Username badlo'),
+        content: TextField(controller: c, maxLength: 20, autofocus: true),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
+          FilledButton(onPressed: () => Navigator.pop(context, c.text.trim()), child: const Text('Save')),
+        ],
+      ),
+    );
+    if (n == null || n.isEmpty) return;
+    final p = await SharedPreferences.getInstance();
+    await p.setString('username', n);
+    if (mounted) setState(() => _me = n);
+  }
 
   Widget _card(BuildContext c, IconData i, String t, String s, Mode m) => Card(
         child: ListTile(
@@ -364,21 +405,104 @@ class HomeScreen extends StatelessWidget {
           subtitle: Text(s),
           trailing: const Icon(Icons.chevron_right),
           onTap: () => Navigator.push(
-              c, MaterialPageRoute(builder: (_) => PeersScreen(me: me, mode: m))),
+              c, MaterialPageRoute(builder: (_) => PeersScreen(me: _me, mode: m))),
         ),
       );
 
   @override
   Widget build(BuildContext context) => Scaffold(
         appBar: AppBar(title: const Text('Bitme')),
+        drawer: Drawer(
+          child: SafeArea(
+            child: Column(children: [
+              Padding(
+                padding: const EdgeInsets.all(24),
+                child: Column(children: [
+                  ClipRRect(
+                      borderRadius: BorderRadius.circular(18),
+                      child: Image.asset('assets/icon.png', width: 72)),
+                  const SizedBox(height: 12),
+                  const Text('Bitme',
+                      style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold)),
+                ]),
+              ),
+              const Divider(height: 1),
+              ListTile(
+                leading: const Icon(Icons.person),
+                title: Text(_me),
+                subtitle: const Text('Mera username'),
+                trailing: const Icon(Icons.edit, size: 20),
+                onTap: () {
+                  Navigator.pop(context);
+                  _rename();
+                },
+              ),
+              ListTile(
+                leading: const Icon(Icons.share),
+                title: const Text('App share karo'),
+                onTap: () {
+                  Navigator.pop(context);
+                  Share.share('Bitme: bina internet ke chat app. Download karo: $kShareLink');
+                },
+              ),
+              ListTile(
+                leading: const Icon(Icons.favorite, color: Colors.pinkAccent),
+                title: const Text('Donate karo'),
+                onTap: () {
+                  Navigator.pop(context);
+                  Navigator.push(
+                      context, MaterialPageRoute(builder: (_) => const DonateScreen()));
+                },
+              ),
+            ]),
+          ),
+        ),
         body: ListView(padding: const EdgeInsets.all(16), children: [
-          Text('Hi, $me 👋', style: const TextStyle(fontSize: 22)),
+          Text('Hi, $_me 👋', style: const TextStyle(fontSize: 22)),
           const SizedBox(height: 16),
           _card(context, Icons.bluetooth, 'Bluetooth se chat',
               'Paas ke phone se, bina WiFi ke', Mode.bluetooth),
           _card(context, Icons.wifi, 'WiFi se chat',
               'Same WiFi par jude phones se', Mode.wifi),
         ]),
+      );
+}
+
+class DonateScreen extends StatelessWidget {
+  const DonateScreen({super.key});
+  @override
+  Widget build(BuildContext context) => Scaffold(
+        appBar: AppBar(title: const Text('Donate karo')),
+        body: Center(
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.all(24),
+            child: Column(children: [
+              const Text('Bitme free hai ❤️',
+                  style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold)),
+              const SizedBox(height: 8),
+              const Text('Agar app pasand aayi to support karo.\nQR scan karke donate kar sakte ho.',
+                  textAlign: TextAlign.center),
+              const SizedBox(height: 24),
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                    color: Colors.white, borderRadius: BorderRadius.circular(16)),
+                // QR badalne ke liye assets/donate_qr.png ko isi naam se replace karo
+                child: Image.asset('assets/donate_qr.png',
+                    width: 260,
+                    height: 260,
+                    errorBuilder: (_, __, ___) => const SizedBox(
+                        width: 260,
+                        height: 260,
+                        child: Center(
+                            child: Text('QR jaldi aayega',
+                                style: TextStyle(color: Colors.black))))),
+              ),
+              const SizedBox(height: 16),
+              const Text('Shukriya 🙏'),
+            ]),
+          ),
+        ),
       );
 }
 
@@ -404,6 +528,14 @@ class _PeersScreenState extends State<PeersScreen> {
   void dispose() {
     t.dispose();
     super.dispose();
+  }
+
+  void _retry() {
+    t.stop();
+    t.error = null;
+    t.needSettings = false;
+    t.notifyListeners();
+    t.start(widget.me);
   }
 
   void _snack(String s) =>
@@ -455,7 +587,20 @@ class _PeersScreenState extends State<PeersScreen> {
           listenable: t,
           builder: (_, __) {
             if (t.error != null) {
-              return Center(child: Padding(padding: const EdgeInsets.all(24), child: Text(t.error!)));
+              return Center(
+                  child: Padding(
+                      padding: const EdgeInsets.all(24),
+                      child: Column(mainAxisSize: MainAxisSize.min, children: [
+                        Text(t.error!, textAlign: TextAlign.center),
+                        const SizedBox(height: 20),
+                        if (t.needSettings)
+                          FilledButton.tonal(
+                              onPressed: openAppSettings,
+                              child: const Text('Settings kholo')),
+                        const SizedBox(height: 8),
+                        FilledButton(
+                            onPressed: _retry, child: const Text('Dobara try karo')),
+                      ])));
             }
             final ps = t.peers;
             if (ps.isEmpty) {
@@ -490,68 +635,4 @@ class ChatScreen extends StatefulWidget {
   State<ChatScreen> createState() => _ChatScreenState();
 }
 
-class _ChatScreenState extends State<ChatScreen> {
-  final _c = TextEditingController();
-
-  void _send() {
-    final s = _c.text.trim();
-    if (s.isEmpty) return;
-    widget.t.send(widget.peer, s);
-    _c.clear();
-  }
-
-  @override
-  Widget build(BuildContext context) => Scaffold(
-        appBar: AppBar(title: Text(widget.peer.name)),
-        body: Column(children: [
-          Expanded(
-            child: ListenableBuilder(
-              listenable: widget.t,
-              builder: (_, __) {
-                final msgs = (widget.t.chats[widget.peer.id] ?? []).reversed.toList();
-                return ListView.builder(
-                  reverse: true,
-                  padding: const EdgeInsets.all(12),
-                  itemCount: msgs.length,
-                  itemBuilder: (_, i) {
-                    final m = msgs[i];
-                    return Align(
-                      alignment: m.mine ? Alignment.centerRight : Alignment.centerLeft,
-                      child: Container(
-                        margin: const EdgeInsets.symmetric(vertical: 3),
-                        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-                        constraints: BoxConstraints(maxWidth: MediaQuery.of(context).size.width * .75),
-                        decoration: BoxDecoration(
-                          color: m.mine ? kAccent : const Color(0xFF2B2D3A),
-                          borderRadius: BorderRadius.circular(16),
-                        ),
-                        child: Text(m.text, style: const TextStyle(fontSize: 16)),
-                      ),
-                    );
-                  },
-                );
-              },
-            ),
-          ),
-          SafeArea(
-            child: Padding(
-              padding: const EdgeInsets.fromLTRB(12, 4, 8, 8),
-              child: Row(children: [
-                Expanded(
-                  child: TextField(
-                    controller: _c,
-                    onSubmitted: (_) => _send(),
-                    decoration: InputDecoration(
-                        hintText: 'Message likho',
-                        filled: true,
-                        border: OutlineInputBorder(
-                            borderRadius: BorderRadius.circular(24), borderSide: BorderSide.none)),
-                  ),
-                ),
-                IconButton.filled(onPressed: _send, icon: const Icon(Icons.send)),
-              ]),
-            ),
-          ),
-        ]),
-      );
-}
+class _ChatScreenState extends State<Chat
