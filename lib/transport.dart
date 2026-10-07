@@ -4,9 +4,11 @@ import 'dart:io';
 import 'dart:math';
 import 'dart:typed_data';
 
-import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
 import 'package:nearby_connections/nearby_connections.dart';
 import 'package:permission_handler/permission_handler.dart';
+
+// ----------------------------------------------------------------- models
 
 class Peer {
   final String id, name;
@@ -20,6 +22,8 @@ class Msg {
   final DateTime at = DateTime.now();
   Msg(this.text, this.mine);
 }
+
+// ------------------------------------------------------------- transports
 
 abstract class Transport extends ChangeNotifier {
   final chats = <String, List<Msg>>{};
@@ -58,6 +62,7 @@ abstract class Transport extends ChangeNotifier {
   }
 }
 
+/// Bluetooth (Google Nearby Connections, Android)
 class BtTransport extends Transport {
   static const _svc = 'com.bitme.chat';
   final _found = <String, String>{};
@@ -68,7 +73,9 @@ class BtTransport extends Transport {
   @override
   List<Peer> get peers {
     final ids = {..._found.keys, ..._links.keys};
-    return ids.map((i) => Peer(i, _links[i] ?? _found[i] ?? i, _links.containsKey(i))).toList();
+    return ids
+        .map((i) => Peer(i, _links[i] ?? _found[i] ?? i, _links.containsKey(i)))
+        .toList();
   }
 
   @override
@@ -82,46 +89,36 @@ class BtTransport extends Transport {
         Permission.bluetoothConnect,
         Permission.nearbyWifiDevices,
       ].request();
-
       if (!await Permission.location.isGranted) {
-        error = 'Bluetooth ke liye Location permission zaroori hai.\nSettings -> Permissions -> Location ko Allow karein.';
+        error = 'Location permission is required for Bluetooth.\n\n'
+            'Open Settings → Permissions → Location → Allow, then come back and tap "Try again".';
         needSettings = true;
         notifyListeners();
         return false;
       }
-
       if (!await Permission.location.serviceStatus.isEnabled) {
-        error = 'Phone ki Location (GPS) ON karein aur Retry dabayein.';
+        error = 'Turn on your phone\'s Location (GPS), then tap "Try again".';
         notifyListeners();
         return false;
       }
-
-      await Nearby().startAdvertising(
-        me,
-        Strategy.P2P_CLUSTER,
-        onConnectionInitiated: _init,
-        onConnectionResult: _result,
-        onDisconnected: _disc,
-        serviceId: _svc,
-      );
-
-      await Nearby().startDiscovery(
-        me,
-        Strategy.P2P_CLUSTER,
-        onEndpointFound: (id, name, _) {
-          _found[id] = name;
-          notifyListeners();
-        },
-        onEndpointLost: (id) {
-          _found.remove(id);
-          notifyListeners();
-        },
-        serviceId: _svc,
-      );
-
+      await Nearby().startAdvertising(me, Strategy.P2P_CLUSTER,
+          onConnectionInitiated: _init,
+          onConnectionResult: _result,
+          onDisconnected: _disc,
+          serviceId: _svc);
+      await Nearby().startDiscovery(me, Strategy.P2P_CLUSTER,
+          onEndpointFound: (id, name, _) {
+            _found[id] = name;
+            notifyListeners();
+          },
+          onEndpointLost: (id) {
+            _found.remove(id);
+            notifyListeners();
+          },
+          serviceId: _svc);
       return true;
     } catch (e) {
-      error = 'Bluetooth start nahi hua: $e';
+      error = 'Could not start Bluetooth: $e';
       notifyListeners();
       return false;
     }
@@ -129,15 +126,11 @@ class BtTransport extends Transport {
 
   void _init(String id, ConnectionInfo info) {
     _found[id] = info.endpointName;
-    Nearby().acceptConnection(
-      id,
-      onPayLoadRecieved: (eid, p) {
-        if (p.type == PayloadType.BYTES && p.bytes != null) {
-          addMsg(eid, Msg(utf8.decode(p.bytes!), false));
-        }
-      },
-      onPayloadTransferUpdate: (a, b) {},
-    );
+    Nearby().acceptConnection(id, onPayLoadRecieved: (eid, p) {
+      if (p.type == PayloadType.BYTES && p.bytes != null) {
+        addMsg(eid, Msg(utf8.decode(p.bytes!), false));
+      }
+    }, onPayloadTransferUpdate: (a, b) {});
   }
 
   void _result(String id, Status s) {
@@ -162,13 +155,10 @@ class BtTransport extends Transport {
     final c = Completer<bool>();
     _pending[p.id] = c;
     try {
-      await Nearby().requestConnection(
-        _me,
-        p.id,
-        onConnectionInitiated: _init,
-        onConnectionResult: _result,
-        onDisconnected: _disc,
-      );
+      await Nearby().requestConnection(_me, p.id,
+          onConnectionInitiated: _init,
+          onConnectionResult: _result,
+          onDisconnected: _disc);
     } catch (_) {
       _pending.remove(p.id);
       return false;
@@ -192,6 +182,7 @@ class BtTransport extends Transport {
   }
 }
 
+/// Same WiFi (UDP broadcast for discovery, UDP unicast for messages)
 class WifiTransport extends Transport {
   static const _port = 45454;
   final _uid = Random().nextInt(1 << 30).toString();
@@ -203,13 +194,15 @@ class WifiTransport extends Transport {
   final _seen = <String, DateTime>{};
 
   @override
-  List<Peer> get peers => _names.entries.map((e) => Peer(e.key, e.value, true)).toList();
+  List<Peer> get peers =>
+      _names.entries.map((e) => Peer(e.key, e.value, true)).toList();
 
   @override
   Future<bool> start(String me) async {
     _me = me;
     try {
-      _sock = await RawDatagramSocket.bind(InternetAddress.anyIPv4, _port, reuseAddress: true);
+      _sock = await RawDatagramSocket.bind(InternetAddress.anyIPv4, _port,
+          reuseAddress: true);
       _sock!.broadcastEnabled = true;
       _sock!.listen(_onEvent);
       _hello();
@@ -219,7 +212,7 @@ class WifiTransport extends Transport {
       });
       return true;
     } catch (e) {
-      error = 'WiFi start nahi hua: $e';
+      error = 'Could not start WiFi: $e';
       notifyListeners();
       return false;
     }
@@ -254,7 +247,10 @@ class WifiTransport extends Transport {
   }
 
   void _prune() {
-    final old = _seen.entries.where((e) => DateTime.now().difference(e.value).inSeconds > 12).map((e) => e.key).toList();
+    final old = _seen.entries
+        .where((e) => DateTime.now().difference(e.value).inSeconds > 12)
+        .map((e) => e.key)
+        .toList();
     for (final u in old) {
       _seen.remove(u);
       _names.remove(u);
@@ -280,3 +276,4 @@ class WifiTransport extends Transport {
     _seen.clear();
   }
 }
+
