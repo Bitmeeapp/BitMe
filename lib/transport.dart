@@ -37,7 +37,7 @@ abstract class Transport extends ChangeNotifier {
   List<Peer> get peers;
   Future<bool> connect(Peer p) async => true;
   void send(Peer p, String text);
-  void stop();
+  Future<void> stop();
 
   bool isOnline(String id) => peers.any((p) => p.id == id && p.connected);
 
@@ -169,16 +169,20 @@ class BtTransport extends Transport {
   @override
   void send(Peer p, String text) {
     addMsg(p.id, Msg(text, true));
-    Nearby().sendBytesPayload(p.id, Uint8List.fromList(utf8.encode(text)));
+    Nearby()
+        .sendBytesPayload(p.id, Uint8List.fromList(utf8.encode(text)))
+        .catchError((_) {});
   }
 
   @override
-  void stop() {
-    Nearby().stopAdvertising();
-    Nearby().stopDiscovery();
-    Nearby().stopAllEndpoints();
+  Future<void> stop() async {
     _found.clear();
     _links.clear();
+    try {
+      await Nearby().stopAdvertising();
+      await Nearby().stopDiscovery();
+      await Nearby().stopAllEndpoints();
+    } catch (_) {}
   }
 }
 
@@ -201,6 +205,8 @@ class WifiTransport extends Transport {
   Future<bool> start(String me) async {
     _me = me;
     try {
+      _timer?.cancel();
+      _sock?.close();
       _sock = await RawDatagramSocket.bind(InternetAddress.anyIPv4, _port,
           reuseAddress: true);
       _sock!.broadcastEnabled = true;
@@ -224,7 +230,19 @@ class WifiTransport extends Transport {
     _sock?.send(utf8.encode(jsonEncode(m)), a, _port);
   }
 
-  void _hello() => _tx(InternetAddress('255.255.255.255'), {'t': 'hi'});
+  Future<void> _hello() async {
+    _tx(InternetAddress('255.255.255.255'), {'t': 'hi'});
+    try {
+      for (final i in await NetworkInterface.list(type: InternetAddressType.IPv4)) {
+        for (final a in i.addresses) {
+          final p = a.address.split('.');
+          if (p.length == 4 && !a.isLoopback) {
+            _tx(InternetAddress('${p[0]}.${p[1]}.${p[2]}.255'), {'t': 'hi'});
+          }
+        }
+      }
+    } catch (_) {}
+  }
 
   void _onEvent(RawSocketEvent e) {
     if (e != RawSocketEvent.read) return;
@@ -267,7 +285,7 @@ class WifiTransport extends Transport {
   }
 
   @override
-  void stop() {
+  Future<void> stop() async {
     _timer?.cancel();
     _sock?.close();
     _sock = null;

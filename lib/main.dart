@@ -211,9 +211,10 @@ class _WelcomeScreenState extends State<WelcomeScreen> {
                   radius: 1.0,
                   colors: [Color(0xFF241466), kBg])),
           child: SafeArea(
-            child: Padding(
+            child: Center(
+              child: SingleChildScrollView(
               padding: const EdgeInsets.all(28),
-              child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
+              child: Column(mainAxisSize: MainAxisSize.min, children: [
                 ClipRRect(
                     borderRadius: BorderRadius.circular(28),
                     child: Image.asset('assets/icon.png', width: 120)),
@@ -243,6 +244,7 @@ class _WelcomeScreenState extends State<WelcomeScreen> {
                 const SizedBox(height: 16),
                 GradientButton(text: 'Get Started', onTap: _save),
               ]),
+            ),
             ),
           ),
         ),
@@ -285,21 +287,26 @@ class _ShellState extends State<Shell> {
   void _snack(String s) => ScaffoldMessenger.of(context)
       .showSnackBar(SnackBar(content: Text(s)));
 
-  void _restart() {
-    t.stop();
+  Future<void> _restart() async {
+    await t.stop();
     t.error = null;
     t.needSettings = false;
     t.refresh();
     t.start(_me);
   }
 
-  void _setMode(Mode m) {
-    if (m == _mode) return;
-    t.stop();
+  bool _switching = false;
+
+  Future<void> _setMode(Mode m) async {
+    if (m == _mode || _switching) return;
+    _switching = true;
+    await t.stop();
+    if (!mounted) return;
     setState(() => _mode = m);
     t.error = null;
     t.needSettings = false;
     t.start(_me);
+    _switching = false;
   }
 
   Future<void> _open(Peer p) async {
@@ -346,6 +353,7 @@ class _ShellState extends State<Shell> {
           .getUrl(Uri.parse('https://api.github.com/repos/$kRepo/releases/latest'));
       req.headers.set('User-Agent', 'Bitme');
       final res = await req.close();
+      if (!mounted) return;
       if (res.statusCode == 404) {
         c.close();
         return _snack('No updates available yet');
@@ -811,8 +819,10 @@ class _ChatScreenState extends State<ChatScreen> {
               return Row(children: [
                 Avatar(name: widget.peer.name, size: 40),
                 const SizedBox(width: 12),
-                Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
                   Text(widget.peer.name,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
                       style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w600)),
                   Row(children: [
                     Icon(Icons.circle, size: 9, color: on ? kGreen : Colors.grey),
@@ -820,7 +830,7 @@ class _ChatScreenState extends State<ChatScreen> {
                     Text(on ? 'Online' : 'Offline',
                         style: const TextStyle(fontSize: 12, color: Colors.white60)),
                   ]),
-                ]),
+                ])),
               ]);
             },
           ),
