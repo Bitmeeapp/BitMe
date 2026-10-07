@@ -6,6 +6,7 @@ import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:nearby_connections/nearby_connections.dart';
+import 'package:permission_handler/permission_handler.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 void main() => runApp(const BitmeApp());
@@ -91,8 +92,13 @@ class BtTransport extends Transport {
   Future<bool> start(String me) async {
     _me = me;
     try {
-      await Nearby().askLocationPermission();
-      await Nearby().askBluetoothPermission();
+      await [
+        Permission.location,
+        Permission.bluetoothScan,
+        Permission.bluetoothAdvertise,
+        Permission.bluetoothConnect,
+        Permission.nearbyWifiDevices,
+      ].request();
       await Nearby().startAdvertising(me, Strategy.P2P_CLUSTER,
           onConnectionInitiated: _init,
           onConnectionResult: _result,
