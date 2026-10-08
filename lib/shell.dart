@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:app_settings/app_settings.dart';
 import 'package:flutter/material.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:share_plus/share_plus.dart';
@@ -22,7 +23,7 @@ class Shell extends StatefulWidget {
   State<Shell> createState() => _ShellState();
 }
 
-class _ShellState extends State<Shell> {
+class _ShellState extends State<Shell> with WidgetsBindingObserver {
   final _sk = GlobalKey<ScaffoldState>();
   final _bt = BtTransport();
   final _wifi = WifiTransport();
@@ -36,11 +37,19 @@ class _ShellState extends State<Shell> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     t.start(_me);
+  }
+
+  // When you come back from Settings, retry automatically.
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed && t.error != null) _restart();
   }
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _bt.dispose();
     _wifi.dispose();
     super.dispose();
@@ -53,6 +62,7 @@ class _ShellState extends State<Shell> {
     await t.stop();
     t.error = null;
     t.needSettings = false;
+    t.needLocation = false;
     t.refresh();
     t.start(_me);
   }
@@ -69,6 +79,7 @@ class _ShellState extends State<Shell> {
     setState(() => _mode = m);
     t.error = null;
     t.needSettings = false;
+    t.needLocation = false;
     t.start(_me);
     _switching = false;
   }
@@ -77,7 +88,7 @@ class _ShellState extends State<Shell> {
     if (!p.connected) {
       _snack('Connecting to ${p.name}...');
       final ok = await t.connect(p);
-      if (!ok) return _snack('Could not connect. Please try again.');
+      if (!ok) return _snack('Could not connect. Keep both phones close, Bluetooth + Location ON, Bitme open on both.');
     }
     if (!mounted) return;
     Navigator.push(
@@ -292,9 +303,16 @@ class _ShellState extends State<Shell> {
           child: Column(mainAxisSize: MainAxisSize.min, children: [
             Text(t.error!, textAlign: TextAlign.center),
             const SizedBox(height: 20),
-            if (t.needSettings)
+            if (t.needLocation)
               FilledButton.tonal(
-                  onPressed: openAppSettings, child: const Text('Open Settings')),
+                  onPressed: () =>
+                      AppSettings.openAppSettings(type: AppSettingsType.location),
+                  child: const Text('Turn on Location')),
+            if (t.needSettings) ...[
+              const SizedBox(height: 8),
+              FilledButton.tonal(
+                  onPressed: openAppSettings, child: const Text('Open app settings')),
+            ],
             const SizedBox(height: 8),
             FilledButton(onPressed: _restart, child: const Text('Try again')),
           ])));

@@ -32,6 +32,7 @@ abstract class Transport extends ChangeNotifier {
   String? openId;
   String? error;
   bool needSettings = false;
+  bool needLocation = false;
   bool _dead = false;
 
   Future<bool> start(String me);
@@ -98,13 +99,15 @@ class BtTransport extends Transport {
       ].request();
       if (!await Permission.location.isGranted) {
         error = 'Location permission is required for Bluetooth.\n\n'
-            'Open Settings → Permissions → Location → Allow, then come back and tap "Try again".';
+            'Tap "Open app settings" → Permissions → Location → Allow. Bitme will retry when you come back.';
         needSettings = true;
         notifyListeners();
         return false;
       }
       if (!await Permission.location.serviceStatus.isEnabled) {
-        error = 'Turn on your phone\'s Location (GPS), then tap "Try again".';
+        error = 'Location is turned off.\n\n'
+            'Bluetooth search needs Location ON. Tap "Turn on Location", switch it on and come back. Bitme will retry automatically.';
+        needLocation = true;
         notifyListeners();
         return false;
       }
@@ -113,23 +116,33 @@ class BtTransport extends Transport {
           onConnectionResult: _result,
           onDisconnected: _disc,
           serviceId: _svc);
-      await Nearby().startDiscovery(me, Strategy.P2P_CLUSTER,
-          onEndpointFound: (id, name, _) {
-            _found[id] = name;
-            notifyListeners();
-          },
-          onEndpointLost: (id) {
-            _found.remove(id);
-            notifyListeners();
-          },
-          serviceId: _svc);
+      await _startDiscovery();
       return true;
     } catch (e) {
-      error = 'Could not start Bluetooth: $e';
+      final m = e.toString();
+      if (m.contains('MISSING_PERMISSION')) {
+        error = 'A required permission is missing.\n\n'
+            'Open app settings and allow Location and Nearby devices, then come back.';
+        needSettings = true;
+        needLocation = m.contains('LOCATION');
+      } else {
+        error = 'Could not start Bluetooth: $e';
+      }
       notifyListeners();
       return false;
     }
   }
+
+  Future<void> _startDiscovery() => Nearby().startDiscovery(_me, Strategy.P2P_CLUSTER,
+      onEndpointFound: (id, name, _) {
+        _found[id] = name;
+        notifyListeners();
+      },
+      onEndpointLost: (id) {
+        _found.remove(id);
+        notifyListeners();
+      },
+      serviceId: _svc);
 
   void _init(String id, ConnectionInfo info) {
     _found[id] = info.endpointName;
@@ -159,18 +172,45 @@ class BtTransport extends Transport {
   @override
   Future<bool> connect(Peer p) async {
     if (p.connected) return true;
-    final c = Completer<bool>();
-    _pending[p.id] = c;
-    try {
-      await Nearby().requestConnection(_me, p.id,
-          onConnectionInitiated: _init,
-          onConnectionResult: _result,
-          onDisconnected: _disc);
-    } catch (_) {
+    for (var attempt = 0; attempt < 3; attempt++) {
+      final c = Completer<bool>();
+      _pending[p.id] = c;
+      // Searching while connecting makes the radio busy; pause it.
+      try {
+        await Nearby().stopDiscovery();
+      } catch (_) {}
+      var ok = false;
+      try {
+        await Nearby().requestConnection(_me, p.id,
+            onConnectionInitiated: _init,
+            onConnectionResult: _result,
+            onDisconnected: _disc);
+        ok = await c.future.timeout(const Duration(seconds: 15), onTimeout: () => false);
+      } catch (e) {
+        if (e.toString().contains('8003')) {
+          // already connected to this phone
+          _links[p.id] = _found[p.id] ?? p.name;
+          ok = true;
+        }
+      }
       _pending.remove(p.id);
-      return false;
+      if (ok) {
+        try {
+          await _startDiscovery();
+        } catch (_) {}
+        notifyListeners();
+        return true;
+      }
+      // clean half-open state, wait a moment, try again
+      try {
+        await Nearby().disconnectFromEndpoint(p.id);
+      } catch (_) {}
+      await Future.delayed(const Duration(milliseconds: 1500));
     }
-    return c.future.timeout(const Duration(seconds: 20), onTimeout: () => false);
+    try {
+      await _startDiscovery();
+    } catch (_) {}
+    return false;
   }
 
   @override
