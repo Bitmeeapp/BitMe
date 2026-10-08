@@ -48,20 +48,25 @@ class _ChatScreenState extends State<ChatScreen> {
             listenable: widget.t,
             builder: (_, __) {
               final on = widget.t.isOnline(widget.peer.id);
+              final isGroup = widget.peer.id.startsWith('group:');
               return Row(children: [
-                Avatar(name: widget.peer.name, size: 40),
+                Avatar(name: widget.peer.name, size: 40, group: isGroup),
                 const SizedBox(width: 12),
                 Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
                   Text(widget.peer.name,
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w600)),
-                  Row(children: [
-                    Icon(Icons.circle, size: 9, color: on ? kGreen : Colors.grey),
-                    const SizedBox(width: 5),
-                    Text(on ? 'Online' : 'Offline',
-                        style: const TextStyle(fontSize: 12, color: Colors.white60)),
-                  ]),
+                  if (isGroup)
+                    const Text('Group chat • WiFi',
+                        style: TextStyle(fontSize: 12, color: Colors.white60))
+                  else
+                    Row(children: [
+                      Icon(Icons.circle, size: 9, color: on ? kGreen : Colors.grey),
+                      const SizedBox(width: 5),
+                      Text(on ? 'Online' : 'Offline',
+                          style: const TextStyle(fontSize: 12, color: Colors.white60)),
+                    ]),
                 ])),
               ]);
             },
@@ -92,6 +97,17 @@ class _ChatScreenState extends State<ChatScreen> {
                           crossAxisAlignment: CrossAxisAlignment.end,
                           mainAxisSize: MainAxisSize.min,
                           children: [
+                            if (!m.mine && m.sender != null)
+                              Align(
+                                  alignment: Alignment.centerLeft,
+                                  child: Padding(
+                                    padding: const EdgeInsets.only(bottom: 3),
+                                    child: Text(m.sender!,
+                                        style: const TextStyle(
+                                            fontSize: 12,
+                                            fontWeight: FontWeight.bold,
+                                            color: Colors.lightBlueAccent)),
+                                  )),
                             Align(
                                 alignment: Alignment.centerLeft,
                                 child: Text(m.text, style: const TextStyle(fontSize: 16))),
@@ -114,7 +130,7 @@ class _ChatScreenState extends State<ChatScreen> {
                         crossAxisAlignment: CrossAxisAlignment.end,
                         children: [
                           if (!m.mine) ...[
-                            Avatar(name: widget.peer.name, size: 30),
+                            Avatar(name: m.sender ?? widget.peer.name, size: 30),
                             const SizedBox(width: 8),
                           ],
                           bubble,
