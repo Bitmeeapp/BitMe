@@ -19,8 +19,9 @@ class Peer {
 class Msg {
   final String text;
   final bool mine;
+  final String? sender; // shown in group chats
   final DateTime at = DateTime.now();
-  Msg(this.text, this.mine);
+  Msg(this.text, this.mine, {this.sender});
 }
 
 // ------------------------------------------------------------- transports
@@ -40,6 +41,12 @@ abstract class Transport extends ChangeNotifier {
   Future<void> stop();
 
   bool isOnline(String id) => peers.any((p) => p.id == id && p.connected);
+
+  // Group chat (WiFi only). Other transports have no groups.
+  Set<String> get joinedGroups => const <String>{};
+  List<String> get nearbyGroups => const <String>[];
+  void joinGroup(String name) {}
+  void leaveGroup(String name) {}
 
   void addMsg(String id, Msg m) {
     (chats[id] ??= []).add(m);
@@ -196,6 +203,46 @@ class WifiTransport extends Transport {
   final _names = <String, String>{};
   final _ips = <String, InternetAddress>{};
   final _seen = <String, DateTime>{};
+  final _groups = <String>{};
+  final _peerGroups = <String, List<String>>{};
+
+  Map<String, dynamic> _hi() => {'t': 'hi', 'g': _groups.toList()};
+
+  @override
+  Set<String> get joinedGroups => _groups;
+
+  @override
+  List<String> get nearbyGroups {
+    final s = <String>{};
+    for (final l in _peerGroups.values) {
+      s.addAll(l);
+    }
+    s.removeAll(_groups);
+    return s.toList()..sort();
+  }
+
+  @override
+  void joinGroup(String name) {
+    if (_groups.add(name)) {
+      _hello();
+      notifyListeners();
+    }
+  }
+
+  @override
+  void leaveGroup(String name) {
+    if (_groups.remove(name)) {
+      chats.remove('group:$name');
+      unread.remove('group:$name');
+      _hello();
+      notifyListeners();
+    }
+  }
+
+  @override
+  bool isOnline(String id) => id.startsWith('group:')
+      ? _groups.contains(id.substring(6))
+      : super.isOnline(id);
 
   @override
   List<Peer> get peers =>
@@ -231,13 +278,13 @@ class WifiTransport extends Transport {
   }
 
   Future<void> _hello() async {
-    _tx(InternetAddress('255.255.255.255'), {'t': 'hi'});
+    _tx(InternetAddress('255.255.255.255'), _hi());
     try {
       for (final i in await NetworkInterface.list(type: InternetAddressType.IPv4)) {
         for (final a in i.addresses) {
           final p = a.address.split('.');
           if (p.length == 4 && !a.isLoopback) {
-            _tx(InternetAddress('${p[0]}.${p[1]}.${p[2]}.255'), {'t': 'hi'});
+            _tx(InternetAddress('${p[0]}.${p[1]}.${p[2]}.255'), _hi());
           }
         }
       }
@@ -256,11 +303,21 @@ class WifiTransport extends Transport {
       _names[u] = m['n'] as String;
       _ips[u] = d.address;
       _seen[u] = DateTime.now();
-      if (m['t'] == 'm') addMsg(u, Msg(m['x'] as String, false));
-      if (isNew) {
-        _tx(d.address, {'t': 'hi'});
-        notifyListeners();
+      var changed = isNew;
+      if (m['t'] == 'hi') {
+        final g = ((m['g'] as List?) ?? []).map((e) => e.toString()).toList();
+        if ((_peerGroups[u] ?? []).join('|') != g.join('|')) changed = true;
+        _peerGroups[u] = g;
       }
+      if (m['t'] == 'm') addMsg(u, Msg(m['x'] as String, false));
+      if (m['t'] == 'g') {
+        final gn = m['gn'] as String;
+        if (_groups.contains(gn)) {
+          addMsg('group:$gn', Msg(m['x'] as String, false, sender: m['n'] as String));
+        }
+      }
+      if (isNew) _tx(d.address, _hi());
+      if (changed) notifyListeners();
     } catch (_) {}
   }
 
@@ -273,6 +330,7 @@ class WifiTransport extends Transport {
       _seen.remove(u);
       _names.remove(u);
       _ips.remove(u);
+      _peerGroups.remove(u);
     }
     if (old.isNotEmpty) notifyListeners();
   }
@@ -280,6 +338,13 @@ class WifiTransport extends Transport {
   @override
   void send(Peer p, String text) {
     addMsg(p.id, Msg(text, true));
+    if (p.id.startsWith('group:')) {
+      final gn = p.id.substring(6);
+      for (final ip in _ips.values) {
+        _tx(ip, {'t': 'g', 'gn': gn, 'x': text});
+      }
+      return;
+    }
     final ip = _ips[p.id];
     if (ip != null) _tx(ip, {'t': 'm', 'x': text});
   }
@@ -292,6 +357,7 @@ class WifiTransport extends Transport {
     _names.clear();
     _ips.clear();
     _seen.clear();
+    _peerGroups.clear();
   }
 }
 
