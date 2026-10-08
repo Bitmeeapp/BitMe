@@ -3,11 +3,21 @@ on:
   push:
     branches: [main]
   workflow_dispatch:
+permissions:
+  contents: write
 jobs:
   apk:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Check Dart files are complete (not cut off)
+        run: |
+          for f in lib/*.dart; do
+            if ! tail -n 1 "$f" | grep -q '^// EOF'; then
+              echo "::error::$f is incomplete (cut off while uploading). Upload it again."
+              exit 1
+            fi
+          done
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
@@ -20,10 +30,19 @@ jobs:
           flutter create --platforms=android --project-name bitme --org com.bitme /tmp/scaffold
           cp -r /tmp/scaffold/android ./android
           python3 tools/patch_android.py
+      - name: Stable signing key (so updates install over the old app)
+        run: |
+          mkdir -p ~/.android
+          cp tools/debug.keystore ~/.android/debug.keystore
       - run: flutter pub get
       - run: dart run flutter_launcher_icons
-      - run: flutter build apk --release
+      - run: flutter build apk --release --build-name=1.0.${{ github.run_number }} --build-number=${{ github.run_number }} --dart-define=BUILD=${{ github.run_number }}
       - uses: actions/upload-artifact@v4
         with:
           name: Bitme-apk
           path: build/app/outputs/flutter-apk/app-release.apk
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: build-${{ github.run_number }}
+          name: Bitme 1.0.${{ github.run_number }}
+          files: build/app/outputs/flutter-apk/app-release.apk
