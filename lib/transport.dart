@@ -2,11 +2,8 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:math';
-import 'dart:typed_data';
 
 import 'package:flutter/foundation.dart';
-import 'package:nearby_connections/nearby_connections.dart';
-import 'package:permission_handler/permission_handler.dart';
 
 // ----------------------------------------------------------------- models
 
@@ -43,6 +40,12 @@ abstract class Transport extends ChangeNotifier {
 
   bool isOnline(String id) => peers.any((p) => p.id == id && p.connected);
 
+  // Mesh relay (Bluetooth only): messages hop through nearby phones.
+  bool meshEnabled = false;
+  bool get supportsMesh => false;
+  List<Peer> get meshPeers => const <Peer>[];
+  void setMesh(bool on) {}
+
   // Group chat (WiFi only). Other transports have no groups.
   Set<String> get joinedGroups => const <String>{};
   List<String> get nearbyGroups => const <String>[];
@@ -67,169 +70,6 @@ abstract class Transport extends ChangeNotifier {
     _dead = true;
     stop();
     super.dispose();
-  }
-}
-
-/// Bluetooth (Google Nearby Connections, Android)
-class BtTransport extends Transport {
-  static const _svc = 'com.bitme.chat';
-  final _found = <String, String>{};
-  final _links = <String, String>{};
-  final _pending = <String, Completer<bool>>{};
-  String _me = '';
-
-  @override
-  List<Peer> get peers {
-    final ids = {..._found.keys, ..._links.keys};
-    return ids
-        .map((i) => Peer(i, _links[i] ?? _found[i] ?? i, _links.containsKey(i)))
-        .toList();
-  }
-
-  @override
-  Future<bool> start(String me) async {
-    _me = me;
-    try {
-      await [
-        Permission.location,
-        Permission.bluetoothScan,
-        Permission.bluetoothAdvertise,
-        Permission.bluetoothConnect,
-        Permission.nearbyWifiDevices,
-      ].request();
-      if (!await Permission.location.isGranted) {
-        error = 'Location permission is required for Bluetooth.\n\n'
-            'Tap "Open app settings" → Permissions → Location → Allow. Bitme will retry when you come back.';
-        needSettings = true;
-        notifyListeners();
-        return false;
-      }
-      if (!await Permission.location.serviceStatus.isEnabled) {
-        error = 'Location is turned off.\n\n'
-            'Bluetooth search needs Location ON. Tap "Turn on Location", switch it on and come back. Bitme will retry automatically.';
-        needLocation = true;
-        notifyListeners();
-        return false;
-      }
-      await Nearby().startAdvertising(me, Strategy.P2P_CLUSTER,
-          onConnectionInitiated: _init,
-          onConnectionResult: _result,
-          onDisconnected: _disc,
-          serviceId: _svc);
-      await _startDiscovery();
-      return true;
-    } catch (e) {
-      final m = e.toString();
-      if (m.contains('MISSING_PERMISSION')) {
-        error = 'A required permission is missing.\n\n'
-            'Open app settings and allow Location and Nearby devices, then come back.';
-        needSettings = true;
-        needLocation = m.contains('LOCATION');
-      } else {
-        error = 'Could not start Bluetooth: $e';
-      }
-      notifyListeners();
-      return false;
-    }
-  }
-
-  Future<void> _startDiscovery() => Nearby().startDiscovery(_me, Strategy.P2P_CLUSTER,
-      onEndpointFound: (id, name, _) {
-        _found[id] = name;
-        notifyListeners();
-      },
-      onEndpointLost: (id) {
-        _found.remove(id);
-        notifyListeners();
-      },
-      serviceId: _svc);
-
-  void _init(String id, ConnectionInfo info) {
-    _found[id] = info.endpointName;
-    Nearby().acceptConnection(id, onPayLoadRecieved: (eid, p) {
-      if (p.type == PayloadType.BYTES && p.bytes != null) {
-        addMsg(eid, Msg(utf8.decode(p.bytes!), false));
-      }
-    }, onPayloadTransferUpdate: (a, b) {});
-  }
-
-  void _result(String id, Status s) {
-    final ok = s == Status.CONNECTED;
-    if (ok) {
-      _links[id] = _found[id] ?? id;
-    } else {
-      _links.remove(id);
-    }
-    _pending.remove(id)?.complete(ok);
-    notifyListeners();
-  }
-
-  void _disc(String id) {
-    _links.remove(id);
-    notifyListeners();
-  }
-
-  @override
-  Future<bool> connect(Peer p) async {
-    if (p.connected) return true;
-    for (var attempt = 0; attempt < 3; attempt++) {
-      final c = Completer<bool>();
-      _pending[p.id] = c;
-      // Searching while connecting makes the radio busy; pause it.
-      try {
-        await Nearby().stopDiscovery();
-      } catch (_) {}
-      var ok = false;
-      try {
-        await Nearby().requestConnection(_me, p.id,
-            onConnectionInitiated: _init,
-            onConnectionResult: _result,
-            onDisconnected: _disc);
-        ok = await c.future.timeout(const Duration(seconds: 15), onTimeout: () => false);
-      } catch (e) {
-        if (e.toString().contains('8003')) {
-          // already connected to this phone
-          _links[p.id] = _found[p.id] ?? p.name;
-          ok = true;
-        }
-      }
-      _pending.remove(p.id);
-      if (ok) {
-        try {
-          await _startDiscovery();
-        } catch (_) {}
-        notifyListeners();
-        return true;
-      }
-      // clean half-open state, wait a moment, try again
-      try {
-        await Nearby().disconnectFromEndpoint(p.id);
-      } catch (_) {}
-      await Future.delayed(const Duration(milliseconds: 1500));
-    }
-    try {
-      await _startDiscovery();
-    } catch (_) {}
-    return false;
-  }
-
-  @override
-  void send(Peer p, String text) {
-    addMsg(p.id, Msg(text, true));
-    Nearby()
-        .sendBytesPayload(p.id, Uint8List.fromList(utf8.encode(text)))
-        .catchError((_) {});
-  }
-
-  @override
-  Future<void> stop() async {
-    _found.clear();
-    _links.clear();
-    try {
-      await Nearby().stopAdvertising();
-      await Nearby().stopDiscovery();
-      await Nearby().stopAllEndpoints();
-    } catch (_) {}
   }
 }
 
