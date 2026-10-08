@@ -72,7 +72,13 @@ class Avatar extends StatelessWidget {
   final String name;
   final double size;
   final bool online;
-  const Avatar({super.key, required this.name, this.size = 52, this.online = false});
+  final bool group;
+  const Avatar(
+      {super.key,
+      required this.name,
+      this.size = 52,
+      this.online = false,
+      this.group = false});
 
   static const _cols = [
     Color(0xFF2E6BFF),
@@ -100,8 +106,10 @@ class Avatar extends StatelessWidget {
                   colors: [c, c.withValues(alpha: .6)],
                   begin: Alignment.topLeft,
                   end: Alignment.bottomRight)),
-          child: Text(name.isEmpty ? '?' : name[0].toUpperCase(),
-              style: TextStyle(fontSize: size * .42, fontWeight: FontWeight.bold)),
+          child: group
+              ? Icon(Icons.groups, size: size * .55)
+              : Text(name.isEmpty ? '?' : name[0].toUpperCase(),
+                  style: TextStyle(fontSize: size * .42, fontWeight: FontWeight.bold)),
         ),
         if (online)
           Positioned(
