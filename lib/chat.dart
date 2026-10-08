@@ -49,6 +49,7 @@ class _ChatScreenState extends State<ChatScreen> {
             builder: (_, __) {
               final on = widget.t.isOnline(widget.peer.id);
               final isGroup = widget.peer.id.startsWith('group:');
+              final isMesh = widget.peer.id.startsWith('mesh:');
               return Row(children: [
                 Avatar(name: widget.peer.name, size: 40, group: isGroup),
                 const SizedBox(width: 12),
@@ -64,7 +65,7 @@ class _ChatScreenState extends State<ChatScreen> {
                     Row(children: [
                       Icon(Icons.circle, size: 9, color: on ? kGreen : Colors.grey),
                       const SizedBox(width: 5),
-                      Text(on ? 'Online' : 'Offline',
+                      Text(on ? (isMesh ? 'Via mesh' : 'Online') : 'Offline',
                           style: const TextStyle(fontSize: 12, color: Colors.white60)),
                     ]),
                 ])),

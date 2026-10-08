@@ -8,6 +8,7 @@ import 'package:share_plus/share_plus.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
 
+import 'bt_transport.dart';
 import 'chat.dart';
 import 'transport.dart';
 import 'ui.dart';
@@ -38,6 +39,11 @@ class _ShellState extends State<Shell> with WidgetsBindingObserver {
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    SharedPreferences.getInstance().then((p) {
+      final on = p.getBool('mesh') ?? false;
+      _bt.setMesh(on);
+      if (mounted) setState(() => _meshOn = on);
+    });
     t.start(_me);
   }
 
@@ -68,8 +74,18 @@ class _ShellState extends State<Shell> with WidgetsBindingObserver {
   }
 
   bool _switching = false;
+  bool _meshOn = false;
 
   void _setTab(int i) => setState(() => _tab = i);
+
+  Future<void> _setMesh(bool on) async {
+    final p = await SharedPreferences.getInstance();
+    await p.setBool('mesh', on);
+    if (!mounted) return;
+    setState(() => _meshOn = on);
+    _bt.setMesh(on);
+    if (on && _mode != Mode.bluetooth) await _setMode(Mode.bluetooth);
+  }
 
   Future<void> _setMode(Mode m) async {
     if (m == _mode || _switching) return;
@@ -228,7 +244,10 @@ class _ShellState extends State<Shell> with WidgetsBindingObserver {
             final gs = [...t.joinedGroups, ...t.nearbyGroups]
                 .where((g) => g.toLowerCase().contains(_q.toLowerCase()))
                 .toList();
-            if (ps.isEmpty && gs.isEmpty) {
+            final mp = t.meshPeers
+                .where((p) => p.name.toLowerCase().contains(_q.toLowerCase()))
+                .toList();
+            if (ps.isEmpty && gs.isEmpty && mp.isEmpty) {
               return Center(
                   child: Padding(
                 padding: const EdgeInsets.all(24),
@@ -247,6 +266,7 @@ class _ShellState extends State<Shell> with WidgetsBindingObserver {
             return ListView(children: [
               ...gs.map(_groupTile),
               ...ps.map(_tile),
+              ...mp.map(_tile),
             ]);
           },
         ),
@@ -259,13 +279,17 @@ class _ShellState extends State<Shell> with WidgetsBindingObserver {
     final un = t.unread[p.id] ?? 0;
     final sub = last != null
         ? '${last.mine ? 'You: ' : ''}${last.text}'
-        : (p.connected ? 'Connected • say hi' : 'Tap to connect');
+        : (p.id.startsWith('mesh:')
+            ? 'Via mesh relay • say hi'
+            : p.connected
+                ? 'Connected • say hi'
+                : 'Tap to connect');
     return InkWell(
       onTap: () => _open(p),
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
         child: Row(children: [
-          Avatar(name: p.name, online: p.connected),
+          Avatar(name: p.name, online: p.connected && !p.id.startsWith('mesh:')),
           const SizedBox(width: 14),
           Expanded(
             child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [

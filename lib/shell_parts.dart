@@ -136,6 +136,50 @@ extension _ShellParts on _ShellState {
     if (ok == true) t.leaveGroup(name);
   }
 
+  Future<void> _sendSms() async {
+    final num = TextEditingController();
+    final msg = TextEditingController();
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: const Text('Send SMS'),
+        content: Column(mainAxisSize: MainAxisSize.min, children: [
+          const Text(
+              'Uses your SIM network, no internet needed. Normal SMS charges may apply. Replies arrive in your SMS app.',
+              style: TextStyle(fontSize: 12, color: Colors.white60)),
+          const SizedBox(height: 12),
+          TextField(
+              controller: num,
+              keyboardType: TextInputType.phone,
+              decoration: const InputDecoration(hintText: 'Phone number')),
+          TextField(
+              controller: msg,
+              maxLines: 3,
+              decoration: const InputDecoration(hintText: 'Message')),
+        ]),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text('Cancel')),
+          FilledButton(
+              onPressed: () => Navigator.pop(context, true),
+              child: const Text('Send')),
+        ],
+      ),
+    );
+    if (ok != true) return;
+    final n = num.text.trim();
+    final m = msg.text.trim();
+    if (n.isEmpty || m.isEmpty) {
+      _snack('Enter a number and a message');
+      return;
+    }
+    final launched = await launchUrl(
+        Uri.parse('sms:$n?body=${Uri.encodeComponent(m)}'),
+        mode: LaunchMode.externalApplication);
+    if (!launched && mounted) _snack('Could not open the SMS app');
+  }
+
   void _plusMenu() {
     showModalBottomSheet(
       context: context,
@@ -158,6 +202,15 @@ extension _ShellParts on _ShellState {
             onTap: () {
               Navigator.pop(context);
               _newGroup();
+            },
+          ),
+          ListTile(
+            leading: const Icon(Icons.sms),
+            title: const Text('Send SMS'),
+            subtitle: const Text('Uses SIM network, no internet'),
+            onTap: () {
+              Navigator.pop(context);
+              _sendSms();
             },
           ),
         ]),
@@ -324,6 +377,13 @@ extension _ShellParts on _ShellState {
                 _sk.currentState?.closeEndDrawer();
                 Share.share('Bitme: chat without internet, over Bluetooth or WiFi. Download: $kShareLink');
               },
+            ),
+            SwitchListTile(
+              secondary: const Icon(Icons.hub),
+              title: const Text('Mesh relay'),
+              subtitle: const Text('Bluetooth: auto-connect and pass messages through nearby phones'),
+              value: _meshOn,
+              onChanged: _setMesh,
             ),
             ListTile(
               leading: const Icon(Icons.system_update),
