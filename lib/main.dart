@@ -41,6 +41,7 @@ class _BootState extends State<Boot> {
   void initState() {
     super.initState();
     SharedPreferences.getInstance().then((p) {
+      if (!mounted) return;
       setState(() {
         _name = p.getString('username');
         _loaded = true;

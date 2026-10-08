@@ -94,7 +94,8 @@ class _ChatScreenState extends State<ChatScreen> {
                         color: m.mine ? null : kBubble,
                         borderRadius: BorderRadius.circular(18),
                       ),
-                      child: Column(
+                      child: IntrinsicWidth(
+                        child: Column(
                           crossAxisAlignment: CrossAxisAlignment.end,
                           mainAxisSize: MainAxisSize.min,
                           children: [
@@ -122,6 +123,7 @@ class _ChatScreenState extends State<ChatScreen> {
                               ],
                             ]),
                           ]),
+                      ),
                     );
                     return Padding(
                       padding: const EdgeInsets.symmetric(vertical: 4),
