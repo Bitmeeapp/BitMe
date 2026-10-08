@@ -294,3 +294,5 @@ class WifiTransport extends Transport {
     _seen.clear();
   }
 }
+
+// EOF
