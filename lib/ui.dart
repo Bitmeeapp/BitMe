@@ -73,12 +73,14 @@ class Avatar extends StatelessWidget {
   final double size;
   final bool online;
   final bool group;
+  final ImageProvider? image; // profile picture (optional)
   const Avatar(
       {super.key,
       required this.name,
       this.size = 52,
       this.online = false,
-      this.group = false});
+      this.group = false,
+      this.image});
 
   static const _cols = [
     Color(0xFF2E6BFF),
@@ -102,11 +104,18 @@ class Avatar extends StatelessWidget {
           alignment: Alignment.center,
           decoration: BoxDecoration(
               shape: BoxShape.circle,
-              gradient: LinearGradient(
-                  colors: [c, c.withValues(alpha: .6)],
-                  begin: Alignment.topLeft,
-                  end: Alignment.bottomRight)),
-          child: group
+              image: image == null
+                  ? null
+                  : DecorationImage(image: image!, fit: BoxFit.cover),
+              gradient: image != null
+                  ? null
+                  : LinearGradient(
+                      colors: [c, c.withValues(alpha: .6)],
+                      begin: Alignment.topLeft,
+                      end: Alignment.bottomRight)),
+          child: image != null
+              ? null
+              : group
               ? Icon(Icons.groups, size: size * .55)
               : Text(name.isEmpty ? '?' : name[0].toUpperCase(),
                   style: TextStyle(fontSize: size * .42, fontWeight: FontWeight.bold)),
