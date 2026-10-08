@@ -1,0 +1,182 @@
+name: Build APK
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check Dart files are complete and up to date
+        run: |
+          for f in lib/*.dart; do
+            if ! tail -n 1 "$f" | grep -q '^// EOF'; then
+              echo "::error::$f is incomplete (cut off while uploading). Upload it again."
+              exit 1
+            fi
+          done
+          BAD=0
+          need() {
+            if ! grep -q "$2" "lib/$1"; then
+              echo "::error::lib/$1 is an OLD version (missing: $2). Upload the newest $1 into the lib folder."
+              BAD=1
+            fi
+          }
+          need transport.dart "bool meshEnabled"
+          need bt_transport.dart "class BtTransport"
+          need shell.dart "_setMesh"
+          need shell_parts.dart "Mesh relay"
+          need chat.dart "isMesh"
+          need chat.dart "IntrinsicWidth"
+          need shell_parts.dart "SingleChildScrollView"
+          need ui.dart "ImageProvider"
+          need shell.dart "_pickAvatar"
+          need shell_actions.dart "_plusMenu"
+          for dep in image_picker android_intent_plus share_plus url_launcher permission_handler nearby_connections shared_preferences; do
+            if ! grep -q "^  $dep:" pubspec.yaml; then
+              echo "::error::pubspec.yaml is an OLD version (missing: $dep). Upload the newest pubspec.yaml (project root)."
+              BAD=1
+            fi
+          done
+          for asset in assets/icon.png assets/donate_qr.png; do
+            if [ ! -f "$asset" ]; then
+              echo "::error::$asset is missing from the repo. Upload it into the assets folder."
+              BAD=1
+            fi
+          done
+          if grep -q "class BtTransport" lib/transport.dart; then
+            echo "::error::lib/transport.dart is an OLD version (it still contains BtTransport). Upload the newest transport.dart."
+            BAD=1
+          fi
+          if [ "$BAD" = "1" ]; then exit 1; fi
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+      - name: Android scaffold
+        run: |
+          flutter create --platforms=android --project-name bitme --org com.bitme /tmp/scaffold
+          cp -r /tmp/scaffold/android ./android
+          python3 tools/patch_android.py
+      - name: Stable signing key (so updates install over the old app)
+        run: |
+          mkdir -p ~/.android
+          base64 -d > ~/.android/debug.keystore <<'KEYEOF'
+          MIIKZgIBAzCCChAGCSqGSIb3DQEHAaCCCgEEggn9MIIJ+TCCBcAGCSqGSIb3DQEHAaCCBbEEggWt
+          MIIFqTCCBaUGCyqGSIb3DQEMCgECoIIFQDCCBTwwZgYJKoZIhvcNAQUNMFkwOAYJKoZIhvcNAQUM
+          MCsEFDJ4Rf90UP0l953FCgUo53YhJEqrAgInEAIBIDAMBggqhkiG9w0CCQUAMB0GCWCGSAFlAwQB
+          KgQQicvvmHCKNbhs0Ltyk8RiggSCBNBT1qGSVGbuAFo7LVFxfuomIGkJjGCOXfTm+uOkviHqHyy8
+          P71PBYSaopt2Mrjpds8tafaY7j6WBHjlJWClovVbMyg4Kwe8GGXtxIZeQSt9uzwiZv8ZiHsASzaY
+          c+a6ACAty9AntYnSqVc9j8lfN6sEgUsZJWS9V+anB2AHev4PknLRGd2XUID/TGNe54P72Y9na6/3
+          V+q+wV5DO0PlF0hb7KU77dkZEf2jpkhPAwdq6/42wyiDvCCWMmce1oAfZE4OoaCvuwZMCu5hKSfI
+          C7vHwCQAloNy+YWFqi3oozBXIYGysuashkgfUz+cFzsc4ka7wza3wtTBizTPNWyZyrykAxlG0Pyk
+          bSrAWDVPWaHrTAz1ETQ1rb99za4ko2XIU010Y0XxHURtOwtIFHrON0ZR1Y90PsIjsxGCHo0xSL5m
+          7hW1MJ0ghgEdL6ybe2oT1g6E9HMyiDWSKGmBCf49mcOtd6oj/A0HWH1dZQt0nl+3UiN+ej/JL97d
+          313mu+PFrvpaXY33dI7SqRwyppnJUO8od6XlO3nAOP7fINbOV80jgm5ahC08kwanrB4SI2FLmcZ4
+          WcjvvDVRUYeeLF4i0p1dlTXmFnndllFGIYBEBorsA2e/bSZhlMw0PHCpl9eJIwltZy/mEawOInR0
+          rSfBQaRGZtCav/85PF6SubrF1a/42lNxDCB+b1LVHfSYMylWo6U0Tx88XL1SHYgSFaSU3hXtsMxa
+          9ZVUaiq7vu685tC1OUnTN+/feBlqhklOFZXkC+mcAjj/ln7VZ8mEx5JHo/mbyU/f8BocbxiN888/
+          7YTgjuf+Cy60elRyMBYqXxXQnAyz0t1LRb8T0CHBV6QKFQIFHLycagL8A0JNUev8M6YHA94bij9Y
+          y44EZJKterGWzt+V9EUBFw+iwBX0v2oJEqDRo7canBMFMiHsjudyPNFlq2M996S+jpj06qW6ymt3
+          0VOhp+f8GaCYN1ZF8dTSXx16BllihnWj15yzXvWL/gwSx19bos4Q36XsxFNFPYtBpd3PC/vxlRpD
+          D5EzMxX/sIXwRs8OVsiU9XEcvnLW41bTBlx6GEnYVnvZLi17AFdF0lc37hnaNsEmXg3USUUAJ9I7
+          8a66/r7s50OshDGc3f0v8p+GtnsSJlzX4GgS9rR/4Et+XbxMYSgOYJHyyj+KDKxoKA4y8+9ZMq+8
+          NxGx9ela76W/9tMn28sADX53S8jnTc+dGvhOzB3PNDnkRoUJzENPNFB3qcCR7Eltn9vRvWRKNpHU
+          fQxgH86j6druZQenLvVqe5MU6g5MmeVI3uEk/9dVB8RfL3bWVjJBBfNzJgugUsN7bbjCmylnGRvE
+          yagsluYCzVFrTZJa1iPUgP7k2HWLamqt6dq5s7e1za7wQ3OFR1ySWW38ccrpChYD4E/zoEs2HM0d
+          s6itHW42LZXUxhHkiI6/+WjA6urPyD1tDmms6cJfFvmqMEvprZHKd44CejBDRSceb3jSUnEh/IgX
+          vGRua/77NyZWgSNFsZs7qoMDzDUA932ozdULjDk3A68cfHTmTJqVNWig80jx4UBBlK3q1EI/t398
+          MO5Tt5khHkxz7OjBV+hwiOGyLSyDiM4tD9crqe2IA9hfbs3IDpntcfxhrK+tU6YmU12VNipPDY6a
+          dzFSMC0GCSqGSIb3DQEJFDEgHh4AYQBuAGQAcgBvAGkAZABkAGUAYgB1AGcAawBlAHkwIQYJKoZI
+          hvcNAQkVMRQEElRpbWUgMTc5MTM3NjU4ODY3NTCCBDEGCSqGSIb3DQEHBqCCBCIwggQeAgEAMIIE
+          FwYJKoZIhvcNAQcBMGYGCSqGSIb3DQEFDTBZMDgGCSqGSIb3DQEFDDArBBR5VH1dZyoTVJrCtip0
+          vzcuwmnTiQICJxACASAwDAYIKoZIhvcNAgkFADAdBglghkgBZQMEASoEENMfoPJJbGlPPnBoN1fQ
+          BV6AggOg+XQ5pXXwN9j0uKR9A3fT9/k/mdNPDjExGo2zYo4EuBfh8lc+3W42hZGqC5Yj8SkbSIos
+          BRUGJNHWs/7G3iw/iCdGcgPZnBZHyY4pjXmA5s35JZcYVKA/oKhFIB8VWpPcdXVDuWLHTfseke5u
+          b3RqkDTkEd4FWn1X0FsMUHE6oHGBpEPoRQP9jey8o7ZOMvqjSqqfAsi8ctiSTF3qc7oLEsvQzA2n
+          Fa0pbkVsM9Qa2x+jIcMecXpgmCQLcrg8PmrwauSo1Vbk3t6jxj/6RkOEELmtfUm5CKXDvzvnQ+0S
+          odGbaW04/AP+zk73iRWkYKdTdYLX5gEeEyJGS1yueYSvyFOA3fK5FlWuhuSv/bwDqLDle6JWoEbI
+          Ah3fSCkNA6Y2JQIQuBV5JrkjdDZrZ1jpIW05OwuWNKU30X68XG/zKMCMmEN3EbV10O8089HVWado
+          yAnD4Ayp4O1tzhwF58DQ6gAwo2UZxh2EQZ7zDjCteXVwsnUeHeA1ytxKR8S9Wxsmsbcnf+XT+w6z
+          RcN+Uk5JGgvUA7bnMCZDxGVnkHlS36PVkep9WDupv4LHQlErXsmzZ/zbBPJlM7mBddSObtFkb9fP
+          B6m3s4U7VHads2PGIqFjTrQYiDIdJeUfV7RIhsJVFJsJ1VEbCWBdr+mnuVBsNeWZBrSTN/SV+sEM
+          G6wJSMDWT0e/lu/dkzQTy8nWhmHCNw2Q8+nh89b/X1NA73ED1h8ntSlEKAg/2rEBauGyrqG6oWBI
+          h1iCo/xr32jGAN/naeFvltPPvBAnJS4AACCHWY3knc+2IUxBiQS74/SJT5Op3abdNoMQH8FX3OR2
+          CdAkypIFjxc/Hy6NsnxrPaFkmITZXMLL+db2f9qy+8EogRSlRDUQUkqYEjwDcPPiI8jv8fEyUGTX
+          DV7DCezmzgLWV6vFFJvBMkGvQWKirvdBM2YoupHfxclxmKZxhzdd5iz2Y1wtdIIxXouDBMRcwbne
+          U/10x1mmnk653tolhQU8oVe0t+9m5LPyRViJpEifjnMPbaAFJxyO/VAjVjHNzUnuZfhkwCleLBBR
+          mGFFG15YzG8u7pugfvImKqpxHQ7roq9EL7zzcIiPDkN6CCpI+3G15hOI3RnmlhyOXND8vFLHFcSf
+          emO8gTyatcuXC7qv4zkcurnA0gftdc+AP4kVBR9kFKN1LGsXG2Zt6bKrgCuqqbargFAzr6+nD5xL
+          k+qsvxgIyrTXACIefBU+ECAk4Ou/ETBNMDEwDQYJYIZIAWUDBAIBBQAEIPPl7+2zM7tju74e690d
+          PsZcQzQ2YcKF+ozS0QYKSTNtBBRpmvEqd+O5+BWKYpH+w7yWIVOeywICJxA=
+          KEYEOF
+          keytool -list -keystore ~/.android/debug.keystore -storepass android -alias androiddebugkey > /dev/null
+      - name: Sign release build with the stable key
+        run: |
+          python3 - <<'PY'
+          import glob, re
+          kts = "\n".join([
+              '    signingConfigs {',
+              '        create("bitme") {',
+              '            storeFile = file(System.getProperty("user.home") + "/.android/debug.keystore")',
+              '            storePassword = "android"',
+              '            keyAlias = "androiddebugkey"',
+              '            keyPassword = "android"',
+              '        }',
+              '    }', '', ''])
+          groovy = "\n".join([
+              '    signingConfigs {',
+              '        bitme {',
+              '            storeFile file(System.getProperty("user.home") + "/.android/debug.keystore")',
+              '            storePassword "android"',
+              '            keyAlias "androiddebugkey"',
+              '            keyPassword "android"',
+              '        }',
+              '    }', '', ''])
+          done = False
+          for g in glob.glob("android/app/build.gradle*"):
+              t = open(g).read()
+              if g.endswith(".kts"):
+                  block = kts
+                  t2 = t.replace('signingConfig = signingConfigs.getByName("debug")', 'signingConfig = signingConfigs.getByName("bitme")')
+              else:
+                  block = groovy
+                  t2 = t.replace("signingConfig signingConfigs.debug", "signingConfig signingConfigs.bitme")
+              if t2 != t:
+                  t2 = re.sub(r"^(\s*)buildTypes\s*\{", lambda m: block + m.group(0), t2, count=1, flags=re.M)
+                  open(g, "w").write(t2)
+                  done = True
+                  print("signing patched:", g)
+          print("OK" if done else "WARNING: signing patch not applied")
+          PY
+      - run: flutter pub get
+      - run: dart run flutter_launcher_icons
+      - run: flutter build apk --release --build-name=1.0.${{ github.run_number }} --build-number=${{ github.run_number }} --dart-define=BUILD=${{ github.run_number }}
+      - name: Verify APK is signed with the stable key
+        run: |
+          APK=build/app/outputs/flutter-apk/app-release.apk
+          SIGNER=$(ls $ANDROID_HOME/build-tools/*/apksigner 2>/dev/null | tail -1)
+          if [ -z "$SIGNER" ]; then echo "apksigner not found, skipping check"; exit 0; fi
+          A=$("$SIGNER" verify --print-certs "$APK" | grep -i 'SHA-256 digest' | head -1 | awk '{print $NF}' | tr 'A-F' 'a-f')
+          K=$(keytool -list -keystore ~/.android/debug.keystore -storepass android | grep -i 'SHA-256' | head -1 | awk '{print $NF}' | tr -d ':' | tr 'A-F' 'a-f')
+          echo "APK signing key : $A"
+          echo "Stable key      : $K"
+          if [ -n "$A" ] && [ -n "$K" ] && [ "$A" != "$K" ]; then
+            echo "::error::APK is NOT signed with the stable key (updates would need uninstall)"
+            exit 1
+          fi
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Bitme-apk
+          path: build/app/outputs/flutter-apk/app-release.apk
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: build-${{ github.run_number }}
+          name: Bitme 1.0.${{ github.run_number }}
+          files: build/app/outputs/flutter-apk/app-release.apk
