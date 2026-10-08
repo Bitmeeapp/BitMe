@@ -29,6 +29,11 @@ jobs:
           need shell.dart "_setMesh"
           need shell_parts.dart "Mesh relay"
           need chat.dart "isMesh"
+          need chat.dart "IntrinsicWidth"
+          need shell_parts.dart "SingleChildScrollView"
+          need ui.dart "ImageProvider"
+          need shell.dart "_pickAvatar"
+          need shell_actions.dart "_plusMenu"
           if grep -q "class BtTransport" lib/transport.dart; then
             echo "::error::lib/transport.dart is an OLD version (it still contains BtTransport). Upload the newest transport.dart."
             exit 1
