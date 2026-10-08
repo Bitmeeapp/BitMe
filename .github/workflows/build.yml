@@ -35,6 +35,18 @@ jobs:
           need ui.dart "ImageProvider"
           need shell.dart "_pickAvatar"
           need shell_actions.dart "_plusMenu"
+          for dep in image_picker android_intent_plus share_plus url_launcher permission_handler nearby_connections shared_preferences; do
+            if ! grep -q "^  $dep:" pubspec.yaml; then
+              echo "::error::pubspec.yaml is an OLD version (missing: $dep). Upload the newest pubspec.yaml (project root)."
+              BAD=1
+            fi
+          done
+          for asset in assets/icon.png assets/donate_qr.png; do
+            if [ ! -f "$asset" ]; then
+              echo "::error::$asset is missing from the repo. Upload it into the assets folder."
+              BAD=1
+            fi
+          done
           if grep -q "class BtTransport" lib/transport.dart; then
             echo "::error::lib/transport.dart is an OLD version (it still contains BtTransport). Upload the newest transport.dart."
             BAD=1
