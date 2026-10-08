@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'package:android_intent_plus/android_intent.dart';
 import 'package:flutter/material.dart';
+import 'package:image_picker/image_picker.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -13,6 +14,7 @@ import 'chat.dart';
 import 'transport.dart';
 import 'ui.dart';
 
+part 'shell_actions.dart';
 part 'shell_parts.dart';
 
 enum Mode { bluetooth, wifi }
@@ -42,7 +44,13 @@ class _ShellState extends State<Shell> with WidgetsBindingObserver {
     SharedPreferences.getInstance().then((p) {
       final on = p.getBool('mesh') ?? false;
       _bt.setMesh(on);
-      if (mounted) setState(() => _meshOn = on);
+      final pic = p.getString('avatar');
+      if (mounted) {
+        setState(() {
+          _meshOn = on;
+          if (pic != null) _avatar = MemoryImage(base64Decode(pic));
+        });
+      }
     });
     t.start(_me);
   }
@@ -75,8 +83,33 @@ class _ShellState extends State<Shell> with WidgetsBindingObserver {
 
   bool _switching = false;
   bool _meshOn = false;
+  ImageProvider? _avatar;
 
   void _setTab(int i) => setState(() => _tab = i);
+
+  Future<void> _pickAvatar() async {
+    try {
+      final x = await ImagePicker().pickImage(
+          source: ImageSource.gallery,
+          maxWidth: 400,
+          maxHeight: 400,
+          imageQuality: 75);
+      if (x == null) return;
+      final bytes = await x.readAsBytes();
+      final p = await SharedPreferences.getInstance();
+      await p.setString('avatar', base64Encode(bytes));
+      if (!mounted) return;
+      setState(() => _avatar = MemoryImage(bytes));
+    } catch (_) {
+      if (mounted) _snack('Could not open the gallery');
+    }
+  }
+
+  Future<void> _removeAvatar() async {
+    final p = await SharedPreferences.getInstance();
+    await p.remove('avatar');
+    if (mounted) setState(() => _avatar = null);
+  }
 
   Future<void> _setMesh(bool on) async {
     final p = await SharedPreferences.getInstance();
