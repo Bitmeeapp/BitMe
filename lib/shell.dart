@@ -1,7 +1,7 @@
 import 'dart:convert';
 import 'dart:io';
 
-import 'package:app_settings/app_settings.dart';
+import 'package:android_intent_plus/android_intent.dart';
 import 'package:flutter/material.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:share_plus/share_plus.dart';
@@ -305,8 +305,9 @@ class _ShellState extends State<Shell> with WidgetsBindingObserver {
             const SizedBox(height: 20),
             if (t.needLocation)
               FilledButton.tonal(
-                  onPressed: () =>
-                      AppSettings.openAppSettings(type: AppSettingsType.location),
+                  onPressed: () => const AndroidIntent(
+                          action: 'android.settings.LOCATION_SOURCE_SETTINGS')
+                      .launch(),
                   child: const Text('Turn on Location')),
             if (t.needSettings) ...[
               const SizedBox(height: 8),
