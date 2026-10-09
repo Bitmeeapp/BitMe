@@ -269,6 +269,15 @@ extension _ShellParts on _ShellState {
                     context, MaterialPageRoute(builder: (_) => const DonateScreen()));
               },
             ),
+            ListTile(
+              leading: const Icon(Icons.privacy_tip_outlined),
+              title: const Text('Privacy policy'),
+              onTap: () {
+                _sk.currentState?.closeEndDrawer();
+                Navigator.push(
+                    context, MaterialPageRoute(builder: (_) => const PrivacyScreen()));
+              },
+            ),
             const SizedBox(height: 24),
             Padding(
               padding: const EdgeInsets.all(16),

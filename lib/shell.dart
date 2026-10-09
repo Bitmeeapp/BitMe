@@ -13,6 +13,7 @@ import 'package:url_launcher/url_launcher.dart';
 
 import 'bt_transport.dart';
 import 'chat.dart';
+import 'privacy.dart';
 import 'store.dart';
 import 'transport.dart';
 import 'ui.dart';
