@@ -40,6 +40,11 @@ jobs:
           need transport.dart "class PeerProfile"
           need shell_actions.dart "_initNotifications"
           need chat.dart "markRead"
+          need main.dart "BitMee"
+          need ui.dart "BitMee"
+          need shell.dart "BitMee"
+          need shell_parts.dart "BitMee"
+          need bt_transport.dart "BitMee"
           need bt_transport.dart "_sendProfile"
           need shell.dart "_setProfile"
           need shell_parts.dart "Edit Profile"
@@ -69,7 +74,7 @@ jobs:
           channel: stable
       - name: Android scaffold
         run: |
-          flutter create --platforms=android --project-name bitme --org com.bitme /tmp/scaffold
+          flutter create --platforms=android --project-name bitmee --org com.bitmee /tmp/scaffold
           cp -r /tmp/scaffold/android ./android
           python3 tools/patch_android.py
       - name: Stable signing key (so updates install over the old app)
@@ -171,8 +176,10 @@ jobs:
           s = open(man).read()
           if "POST_NOTIFICATIONS" not in s:
               s = s.replace("<application", '    <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>\n    <application', 1)
-              open(man, "w").write(s)
               print("manifest: added POST_NOTIFICATIONS")
+          s = re.sub(r'android:label="[^"]*"', 'android:label="BitMee"', s, count=1)
+          open(man, "w").write(s)
+          print("manifest label: BitMee")
           for g in glob.glob("android/app/build.gradle*"):
               t = open(g).read()
               if g.endswith(".kts"):
@@ -205,10 +212,10 @@ jobs:
           fi
       - uses: actions/upload-artifact@v4
         with:
-          name: Bitme-apk
+          name: BitMee-apk
           path: build/app/outputs/flutter-apk/app-release.apk
       - uses: softprops/action-gh-release@v2
         with:
           tag_name: build-${{ github.run_number }}
-          name: Bitme 1.0.${{ github.run_number }}
+          name: BitMee 1.0.${{ github.run_number }}
           files: build/app/outputs/flutter-apk/app-release.apk
