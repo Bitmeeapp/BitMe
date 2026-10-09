@@ -41,6 +41,8 @@ jobs:
           need shell_actions.dart "_initNotifications"
           need chat.dart "markRead"
           need main.dart "BitMee"
+          need privacy.dart "class PrivacyScreen"
+          need shell_parts.dart "Privacy policy"
           need ui.dart "BitMee"
           need shell.dart "BitMee"
           need shell_parts.dart "BitMee"
