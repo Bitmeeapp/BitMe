@@ -35,7 +35,15 @@ jobs:
           need ui.dart "ImageProvider"
           need shell.dart "_pickAvatar"
           need shell_actions.dart "_plusMenu"
-          for dep in image_picker android_intent_plus share_plus url_launcher permission_handler nearby_connections shared_preferences; do
+          need shell_actions.dart "_editProfile"
+          need store.dart "class ChatStore"
+          need transport.dart "class PeerProfile"
+          need shell_actions.dart "_initNotifications"
+          need chat.dart "markRead"
+          need bt_transport.dart "_sendProfile"
+          need shell.dart "_setProfile"
+          need shell_parts.dart "Edit Profile"
+          for dep in flutter_local_notifications image_picker android_intent_plus share_plus url_launcher permission_handler nearby_connections shared_preferences; do
             if ! grep -q "^  $dep:" pubspec.yaml; then
               echo "::error::pubspec.yaml is an OLD version (missing: $dep). Upload the newest pubspec.yaml (project root)."
               BAD=1
@@ -154,6 +162,30 @@ jobs:
                   done = True
                   print("signing patched:", g)
           print("OK" if done else "WARNING: signing patch not applied")
+          PY
+      - name: Android extras (notification permission, desugaring)
+        run: |
+          python3 - <<'PY'
+          import glob, re
+          man = "android/app/src/main/AndroidManifest.xml"
+          s = open(man).read()
+          if "POST_NOTIFICATIONS" not in s:
+              s = s.replace("<application", '    <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>\n    <application', 1)
+              open(man, "w").write(s)
+              print("manifest: added POST_NOTIFICATIONS")
+          for g in glob.glob("android/app/build.gradle*"):
+              t = open(g).read()
+              if g.endswith(".kts"):
+                  if "isCoreLibraryDesugaringEnabled" not in t:
+                      t = re.sub(r"(compileOptions\s*\{)", r"\1\n        isCoreLibraryDesugaringEnabled = true", t, count=1)
+                      t += '\ndependencies {\n    coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.5")\n}\n'
+                      print("desugaring enabled in", g)
+              else:
+                  if "coreLibraryDesugaringEnabled" not in t:
+                      t = re.sub(r"(compileOptions\s*\{)", r"\1\n        coreLibraryDesugaringEnabled true", t, count=1)
+                      t += '\ndependencies {\n    coreLibraryDesugaring "com.android.tools:desugar_jdk_libs:2.1.5"\n}\n'
+                      print("desugaring enabled in", g)
+              open(g, "w").write(t)
           PY
       - run: flutter pub get
       - run: dart run flutter_launcher_icons
