@@ -2,8 +2,10 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:math';
+import 'dart:typed_data';
 
 import 'package:flutter/foundation.dart';
+import 'package:flutter/painting.dart';
 
 // ----------------------------------------------------------------- models
 
@@ -11,26 +13,61 @@ class Peer {
   final String id, name;
   final bool connected;
   Peer(this.id, this.name, this.connected);
+
+  /// Conversation key: the same person always has the same chat,
+  /// whichever way (Bluetooth, WiFi, mesh) they are reached.
+  String get key => id.startsWith('group:')
+      ? id
+      : id.startsWith('mesh:')
+          ? 'dm:${id.substring(5)}'
+          : 'dm:$name';
 }
 
 class Msg {
   final String text;
   final bool mine;
   final String? sender; // shown in group chats
-  final DateTime at = DateTime.now();
-  Msg(this.text, this.mine, {this.sender});
+  final String? id; // used for delivery / read ticks
+  int status; // 1 = sent, 2 = delivered, 3 = read
+  final DateTime at;
+  Msg(this.text, this.mine,
+      {this.sender, this.id, this.status = 1, DateTime? at})
+      : at = at ?? DateTime.now();
 }
+
+/// What another person shares about themselves.
+class PeerProfile {
+  final String bio, about;
+  final ImageProvider? image;
+  PeerProfile(this.bio, this.about, Uint8List? thumb)
+      : image = (thumb == null || thumb.isEmpty) ? null : MemoryImage(thumb);
+}
+
+// Shared by Bluetooth and WiFi so a conversation is the same on both.
+final sharedChats = <String, List<Msg>>{};
+final sharedUnread = <String, int>{};
+final sharedProfiles = <String, PeerProfile>{};
 
 // ------------------------------------------------------------- transports
 
 abstract class Transport extends ChangeNotifier {
-  final chats = <String, List<Msg>>{};
-  final unread = <String, int>{};
-  String? openId;
+  final chats = sharedChats;
+  final unread = sharedUnread;
+  final profiles = sharedProfiles;
+  String? openId; // key of the chat that is open on screen
   String? error;
   bool needSettings = false;
   bool needLocation = false;
+  bool appActive = true; // false while the app is in the background
+  void Function(String key, Msg m)? onIncoming; // for notifications
+  void Function()? onChanged; // chats changed (for saving)
   bool _dead = false;
+
+  // My own profile, shared with the people I talk to.
+  String myBio = '';
+  String myAbout = '';
+  Uint8List? myThumb;
+  int profileVersion = 0;
 
   Future<bool> start(String me);
   List<Peer> get peers;
@@ -52,10 +89,89 @@ abstract class Transport extends ChangeNotifier {
   void joinGroup(String name) {}
   void leaveGroup(String name) {}
 
-  void addMsg(String id, Msg m) {
-    (chats[id] ??= []).add(m);
-    if (!m.mine && openId != id) unread[id] = (unread[id] ?? 0) + 1;
+  /// Send a delivery / read confirmation to the person behind [key].
+  void ack(String key, String id, int status) {}
+
+  /// My profile changed: tell the others.
+  void profileChanged() {}
+
+  void setMyProfile(String bio, String about, Uint8List? thumb) {
+    myBio = bio;
+    myAbout = about;
+    myThumb = thumb;
+    profileVersion =
+        Object.hash(bio, about, Object.hashAll(thumb ?? const <int>[]));
+    profileChanged();
+  }
+
+  Map<String, dynamic> profileJson() => {
+        'bio': myBio,
+        'about': myAbout,
+        'av': myThumb == null ? '' : base64Encode(myThumb!),
+        'pv': profileVersion,
+      };
+
+  void storeProfile(String name, Map m) {
+    final av = (m['av'] as String?) ?? '';
+    Uint8List? thumb;
+    if (av.isNotEmpty) {
+      try {
+        thumb = base64Decode(av);
+      } catch (_) {}
+    }
+    profiles[name] = PeerProfile(
+        (m['bio'] as String?) ?? '', (m['about'] as String?) ?? '', thumb);
     notifyListeners();
+  }
+
+  ImageProvider? avatarOf(String name) => profiles[name]?.image;
+
+  String newId() =>
+      '${DateTime.now().microsecondsSinceEpoch}-${Random().nextInt(1 << 20)}';
+
+  void addMsg(String key, Msg m) {
+    (chats[key] ??= []).add(m);
+    if (!m.mine) {
+      if (openId != key) unread[key] = (unread[key] ?? 0) + 1;
+      onIncoming?.call(key, m);
+    }
+    onChanged?.call();
+    notifyListeners();
+  }
+
+  /// A message from another phone: keep it and confirm delivery / reading.
+  void receive(String key, Msg m) {
+    addMsg(key, m);
+    final id = m.id;
+    if (id == null) return;
+    ack(key, id, 2);
+    m.status = 2;
+    if (appActive && openId == key) {
+      ack(key, id, 3);
+      m.status = 3;
+    }
+  }
+
+  /// The person opened the chat: confirm everything they received as read.
+  void markRead(String key) {
+    for (final m in chats[key] ?? <Msg>[]) {
+      if (!m.mine && m.id != null && m.status < 3) {
+        ack(key, m.id!, 3);
+        m.status = 3;
+      }
+    }
+    onChanged?.call();
+  }
+
+  void handleAck(String key, String id, int status) {
+    for (final m in chats[key] ?? <Msg>[]) {
+      if (m.mine && m.id == id && m.status < status) {
+        m.status = status;
+        onChanged?.call();
+        notifyListeners();
+        return;
+      }
+    }
   }
 
   void refresh() => notifyListeners();
@@ -85,8 +201,11 @@ class WifiTransport extends Transport {
   final _seen = <String, DateTime>{};
   final _groups = <String>{};
   final _peerGroups = <String, List<String>>{};
+  final _peerPv = <String, int>{};
+  final _askedAt = <String, DateTime>{};
 
-  Map<String, dynamic> _hi() => {'t': 'hi', 'g': _groups.toList()};
+  Map<String, dynamic> _hi() =>
+      {'t': 'hi', 'g': _groups.toList(), 'pv': profileVersion};
 
   @override
   Set<String> get joinedGroups => _groups;
@@ -114,6 +233,7 @@ class WifiTransport extends Transport {
     if (_groups.remove(name)) {
       chats.remove('group:$name');
       unread.remove('group:$name');
+      onChanged?.call();
       _hello();
       notifyListeners();
     }
@@ -127,6 +247,9 @@ class WifiTransport extends Transport {
   @override
   List<Peer> get peers =>
       _names.entries.map((e) => Peer(e.key, e.value, true)).toList();
+
+  @override
+  void profileChanged() => _hello();
 
   @override
   Future<bool> start(String me) async {
@@ -171,6 +294,13 @@ class WifiTransport extends Transport {
     } catch (_) {}
   }
 
+  void _askProfile(String u, InternetAddress a) {
+    final last = _askedAt[u];
+    if (last != null && DateTime.now().difference(last).inSeconds < 5) return;
+    _askedAt[u] = DateTime.now();
+    _tx(a, {'t': 'pq'});
+  }
+
   void _onEvent(RawSocketEvent e) {
     if (e != RawSocketEvent.read) return;
     final d = _sock?.receive();
@@ -179,22 +309,40 @@ class WifiTransport extends Transport {
       final m = jsonDecode(utf8.decode(d.data)) as Map;
       final u = m['u'] as String;
       if (u == _uid) return;
+      final name = m['n'] as String;
       final isNew = !_names.containsKey(u);
-      _names[u] = m['n'] as String;
+      _names[u] = name;
       _ips[u] = d.address;
       _seen[u] = DateTime.now();
       var changed = isNew;
-      if (m['t'] == 'hi') {
-        final g = ((m['g'] as List?) ?? []).map((e) => e.toString()).toList();
-        if ((_peerGroups[u] ?? []).join('|') != g.join('|')) changed = true;
-        _peerGroups[u] = g;
-      }
-      if (m['t'] == 'm') addMsg(u, Msg(m['x'] as String, false));
-      if (m['t'] == 'g') {
-        final gn = m['gn'] as String;
-        if (_groups.contains(gn)) {
-          addMsg('group:$gn', Msg(m['x'] as String, false, sender: m['n'] as String));
-        }
+      switch (m['t']) {
+        case 'hi':
+          final gl = ((m['g'] as List?) ?? []).map((x) => x.toString()).toList();
+          if ((_peerGroups[u] ?? []).join('|') != gl.join('|')) changed = true;
+          _peerGroups[u] = gl;
+          final hpv = m['pv'];
+          if (hpv is int && hpv != 0 && _peerPv[u] != hpv) _askProfile(u, d.address);
+          break;
+        case 'pq':
+          _tx(d.address, {'t': 'p', ...profileJson()});
+          break;
+        case 'p':
+          storeProfile(name, m);
+          final ppv = m['pv'];
+          if (ppv is int) _peerPv[u] = ppv;
+          break;
+        case 'm':
+          receive('dm:$name', Msg(m['x'] as String, false, id: m['i'] as String?));
+          break;
+        case 'a':
+          handleAck('dm:$name', m['i'] as String, m['s'] as int);
+          break;
+        case 'g':
+          final gname = m['gn'] as String;
+          if (_groups.contains(gname)) {
+            addMsg('group:$gname', Msg(m['x'] as String, false, sender: name));
+          }
+          break;
       }
       if (isNew) _tx(d.address, _hi());
       if (changed) notifyListeners();
@@ -216,17 +364,32 @@ class WifiTransport extends Transport {
   }
 
   @override
+  void ack(String key, String id, int status) {
+    if (!key.startsWith('dm:')) return;
+    final name = key.substring(3);
+    for (final e in _names.entries) {
+      if (e.value == name) {
+        final ip = _ips[e.key];
+        if (ip != null) _tx(ip, {'t': 'a', 'i': id, 's': status});
+        return;
+      }
+    }
+  }
+
+  @override
   void send(Peer p, String text) {
-    addMsg(p.id, Msg(text, true));
     if (p.id.startsWith('group:')) {
+      addMsg(p.key, Msg(text, true));
       final gn = p.id.substring(6);
       for (final ip in _ips.values) {
         _tx(ip, {'t': 'g', 'gn': gn, 'x': text});
       }
       return;
     }
+    final m = Msg(text, true, id: newId());
+    addMsg(p.key, m);
     final ip = _ips[p.id];
-    if (ip != null) _tx(ip, {'t': 'm', 'x': text});
+    if (ip != null) _tx(ip, {'t': 'm', 'i': m.id, 'x': text});
   }
 
   @override
@@ -238,6 +401,8 @@ class WifiTransport extends Transport {
     _ips.clear();
     _seen.clear();
     _peerGroups.clear();
+    _peerPv.clear();
+    _askedAt.clear();
   }
 }
 

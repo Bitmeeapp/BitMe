@@ -12,7 +12,10 @@ extension _ShellActions on _ShellState {
         : (joined ? 'Group • say hi' : 'Group nearby • tap to join');
     return InkWell(
       onTap: () {
-        if (!joined) t.joinGroup(name);
+        if (!joined) {
+          t.joinGroup(name);
+          _saveGroups();
+        }
         _openGroup(name);
       },
       onLongPress: joined ? () => _leaveGroup(name) : null,
@@ -67,6 +70,7 @@ extension _ShellActions on _ShellState {
         hint: 'Group name', ok: 'Continue');
     if (n == null || n.isEmpty) return;
     t.joinGroup(n);
+    _saveGroups();
     _openGroup(n);
   }
 
@@ -86,7 +90,10 @@ extension _ShellActions on _ShellState {
         ],
       ),
     );
-    if (ok == true) t.leaveGroup(name);
+    if (ok == true) {
+      t.leaveGroup(name);
+      _saveGroups();
+    }
   }
 
   Future<void> _sendSms() async {
@@ -131,6 +138,96 @@ extension _ShellActions on _ShellState {
         Uri.parse('sms:$n?body=${Uri.encodeComponent(m)}'),
         mode: LaunchMode.externalApplication);
     if (!launched && mounted) _snack('Could not open the SMS app');
+  }
+
+  Future<void> _editProfile() async {
+    _sk.currentState?.closeEndDrawer();
+    final nameC = TextEditingController(text: _me);
+    final bioC = TextEditingController(text: _bio);
+    final aboutC = TextEditingController(text: _about);
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (_) => AlertDialog(
+        scrollable: true,
+        title: const Text('Edit profile'),
+        content: Column(mainAxisSize: MainAxisSize.min, children: [
+          TextField(
+              controller: nameC,
+              maxLength: 20,
+              decoration: const InputDecoration(labelText: 'Username')),
+          TextField(
+              controller: bioC,
+              maxLength: 60,
+              decoration: const InputDecoration(
+                  labelText: 'Bio (short)', hintText: 'One line about you')),
+          TextField(
+              controller: aboutC,
+              maxLength: 300,
+              minLines: 3,
+              maxLines: 6,
+              decoration: const InputDecoration(
+                  labelText: 'About (long description)',
+                  alignLabelWithHint: true)),
+        ]),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text('Cancel')),
+          FilledButton(
+              onPressed: () => Navigator.pop(context, true),
+              child: const Text('Save')),
+        ],
+      ),
+    );
+    if (ok != true) return;
+    final name = nameC.text.trim();
+    final bio = bioC.text.trim();
+    final about = aboutC.text.trim();
+    final p = await SharedPreferences.getInstance();
+    await p.setString('bio', bio);
+    await p.setString('about', about);
+    final renamed = name.isNotEmpty && name != _me;
+    if (renamed) await p.setString('username', name);
+    if (!mounted) return;
+    _setProfile(bio, about, renamed ? name : null);
+  }
+
+  Future<void> _initNotifications() async {
+    try {
+      await _notifier.initialize(const InitializationSettings(
+          android: AndroidInitializationSettings('@mipmap/launcher_icon')));
+      await Permission.notification.request();
+    } catch (_) {}
+  }
+
+  void _notify(String key, Msg m) {
+    if (!_background) return;
+    final isGroup = key.startsWith('group:');
+    final name = key.substring(isGroup ? 6 : 3);
+    final title = isGroup ? '${m.sender ?? 'Someone'} • $name' : name;
+    _notifier
+        .show(
+            key.hashCode & 0x7fffffff,
+            title,
+            m.text,
+            const NotificationDetails(
+                android: AndroidNotificationDetails('bitme_messages', 'Messages',
+                    channelDescription: 'New message alerts',
+                    importance: Importance.high,
+                    priority: Priority.high)))
+        .catchError((_) {});
+  }
+
+  /// Tell both transports what my profile looks like (shared with others).
+  void _syncProfile() {
+    for (final tr in [_bt, _wifi]) {
+      tr.setMyProfile(_bio, _about, _thumb);
+    }
+  }
+
+  Future<void> _saveGroups() async {
+    final p = await SharedPreferences.getInstance();
+    await p.setStringList('groups', _wifi.joinedGroups.toList());
   }
 
   void _avatarMenu() {

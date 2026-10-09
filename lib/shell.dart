@@ -1,8 +1,10 @@
 import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:android_intent_plus/android_intent.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:share_plus/share_plus.dart';
@@ -11,6 +13,7 @@ import 'package:url_launcher/url_launcher.dart';
 
 import 'bt_transport.dart';
 import 'chat.dart';
+import 'store.dart';
 import 'transport.dart';
 import 'ui.dart';
 
@@ -45,20 +48,55 @@ class _ShellState extends State<Shell> with WidgetsBindingObserver {
       final on = p.getBool('mesh') ?? false;
       _bt.setMesh(on);
       final pic = p.getString('avatar');
+      final bio = p.getString('bio') ?? '';
+      final about = p.getString('about') ?? '';
+      for (final g in p.getStringList('groups') ?? <String>[]) {
+        _wifi.joinGroup(g);
+      }
+      final thumbB64 = p.getString('avatar_thumb');
+      if (thumbB64 != null) _thumb = base64Decode(thumbB64);
+      if (pic != null && thumbB64 == null) {
+        makeThumb(base64Decode(pic)).then((b) {
+          _thumb = b;
+          p.setString('avatar_thumb', base64Encode(b));
+          _syncProfile();
+        });
+      }
       if (mounted) {
         setState(() {
           _meshOn = on;
+          _bio = bio;
+          _about = about;
           if (pic != null) _avatar = MemoryImage(base64Decode(pic));
         });
       }
+      _syncProfile();
     });
-    t.start(_me);
+    for (final tr in [_bt, _wifi]) {
+      tr.onChanged = ChatStore.saveSoon;
+      tr.onIncoming = (k, m) => _notify(k, m);
+    }
+    ChatStore.load().then((_) {
+      if (mounted) t.refresh();
+    });
+    // Ask for the notification permission after Bluetooth has asked its own
+    // (Android allows only one permission dialog at a time).
+    t.start(_me).whenComplete(() => _initNotifications());
   }
+
 
   // When you come back from Settings, retry automatically.
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state == AppLifecycleState.resumed && t.error != null) _restart();
+    final active = state == AppLifecycleState.resumed;
+    _background = !active;
+    _bt.appActive = active;
+    _wifi.appActive = active;
+    if (active) {
+      final k = t.openId;
+      if (k != null) t.markRead(k);
+      if (t.error != null) _restart();
+    }
   }
 
   @override
@@ -84,6 +122,11 @@ class _ShellState extends State<Shell> with WidgetsBindingObserver {
   bool _switching = false;
   bool _meshOn = false;
   ImageProvider? _avatar;
+  Uint8List? _thumb;
+  bool _background = false;
+  final _notifier = FlutterLocalNotificationsPlugin();
+  String _bio = '';
+  String _about = '';
 
   void _setTab(int i) => setState(() => _tab = i);
 
@@ -96,10 +139,16 @@ class _ShellState extends State<Shell> with WidgetsBindingObserver {
           imageQuality: 75);
       if (x == null) return;
       final bytes = await x.readAsBytes();
+      final thumb = await makeThumb(bytes);
       final p = await SharedPreferences.getInstance();
       await p.setString('avatar', base64Encode(bytes));
+      await p.setString('avatar_thumb', base64Encode(thumb));
       if (!mounted) return;
-      setState(() => _avatar = MemoryImage(bytes));
+      setState(() {
+        _avatar = MemoryImage(bytes);
+        _thumb = thumb;
+      });
+      _syncProfile();
     } catch (_) {
       if (mounted) _snack('Could not open the gallery');
     }
@@ -108,7 +157,10 @@ class _ShellState extends State<Shell> with WidgetsBindingObserver {
   Future<void> _removeAvatar() async {
     final p = await SharedPreferences.getInstance();
     await p.remove('avatar');
+    await p.remove('avatar_thumb');
     if (mounted) setState(() => _avatar = null);
+    _thumb = null;
+    _syncProfile();
   }
 
   Future<void> _setMesh(bool on) async {
@@ -134,7 +186,8 @@ class _ShellState extends State<Shell> with WidgetsBindingObserver {
   }
 
   Future<void> _open(Peer p) async {
-    if (!p.connected) {
+    final offline = p.id.startsWith('offline:');
+    if (!p.connected && !offline) {
       _snack('Connecting to ${p.name}...');
       final ok = await t.connect(p);
       if (!ok) return _snack('Could not connect. Keep both phones close, Bluetooth + Location ON, Bitme open on both.');
@@ -143,7 +196,8 @@ class _ShellState extends State<Shell> with WidgetsBindingObserver {
     Navigator.push(
         context,
         MaterialPageRoute(
-            builder: (_) => ChatScreen(t: t, peer: Peer(p.id, p.name, true))));
+            builder: (_) => ChatScreen(
+                t: t, peer: offline ? p : Peer(p.id, p.name, true))));
   }
 
   Future<void> _addUsername() async {
@@ -158,14 +212,14 @@ class _ShellState extends State<Shell> with WidgetsBindingObserver {
     }
   }
 
-  Future<void> _rename() async {
-    _sk.currentState?.closeEndDrawer();
-    final n = await askText(context, 'Change username', initial: _me);
-    if (n == null || n.isEmpty || n == _me) return;
-    final p = await SharedPreferences.getInstance();
-    await p.setString('username', n);
-    setState(() => _me = n);
-    _restart();
+  void _setProfile(String bio, String about, String? newName) {
+    setState(() {
+      _bio = bio;
+      _about = about;
+      if (newName != null) _me = newName;
+    });
+    _syncProfile();
+    if (newName != null) _restart();
   }
 
   Future<void> _checkUpdate() async {
@@ -267,8 +321,8 @@ class _ShellState extends State<Shell> with WidgetsBindingObserver {
                 .where((p) => p.name.toLowerCase().contains(_q.toLowerCase()))
                 .toList();
             ps.sort((a, b) {
-              final la = t.chats[a.id]?.last.at;
-              final lb = t.chats[b.id]?.last.at;
+              final la = t.chats[a.key]?.last.at;
+              final lb = t.chats[b.key]?.last.at;
               if (la != null && lb != null) return lb.compareTo(la);
               if (la != null) return -1;
               if (lb != null) return 1;
@@ -280,7 +334,17 @@ class _ShellState extends State<Shell> with WidgetsBindingObserver {
             final mp = t.meshPeers
                 .where((p) => p.name.toLowerCase().contains(_q.toLowerCase()))
                 .toList();
-            if (ps.isEmpty && gs.isEmpty && mp.isEmpty) {
+            final present = {...ps.map((p) => p.name), ...mp.map((p) => p.name)};
+            final off = t.chats.keys
+                .where((k) => k.startsWith('dm:') && (t.chats[k] ?? []).isNotEmpty)
+                .map((k) => k.substring(3))
+                .where((n) =>
+                    !present.contains(n) &&
+                    n.toLowerCase().contains(_q.toLowerCase()))
+                .map((n) => Peer('offline:$n', n, false))
+                .toList()
+              ..sort((a, b) => t.chats[b.key]!.last.at.compareTo(t.chats[a.key]!.last.at));
+            if (ps.isEmpty && gs.isEmpty && mp.isEmpty && off.isEmpty) {
               return Center(
                   child: Padding(
                 padding: const EdgeInsets.all(24),
@@ -300,6 +364,7 @@ class _ShellState extends State<Shell> with WidgetsBindingObserver {
               ...gs.map(_groupTile),
               ...ps.map(_tile),
               ...mp.map(_tile),
+              ...off.map(_tile),
             ]);
           },
         ),
@@ -308,8 +373,8 @@ class _ShellState extends State<Shell> with WidgetsBindingObserver {
   }
 
   Widget _tile(Peer p) {
-    final last = (t.chats[p.id] ?? []).isEmpty ? null : t.chats[p.id]!.last;
-    final un = t.unread[p.id] ?? 0;
+    final last = (t.chats[p.key] ?? []).isEmpty ? null : t.chats[p.key]!.last;
+    final un = t.unread[p.key] ?? 0;
     final sub = last != null
         ? '${last.mine ? 'You: ' : ''}${last.text}'
         : (p.id.startsWith('mesh:')
@@ -322,7 +387,10 @@ class _ShellState extends State<Shell> with WidgetsBindingObserver {
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
         child: Row(children: [
-          Avatar(name: p.name, online: p.connected && !p.id.startsWith('mesh:')),
+          Avatar(
+              name: p.name,
+              image: t.avatarOf(p.name),
+              online: p.connected && !p.id.startsWith('mesh:')),
           const SizedBox(width: 14),
           Expanded(
             child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [

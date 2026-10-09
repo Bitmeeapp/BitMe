@@ -52,11 +52,9 @@ extension _ShellParts on _ShellState {
         listenable: Listenable.merge([_bt, _wifi]),
         builder: (_, __) {
           var sent = 0, got = 0;
-          for (final tr in [_bt, _wifi]) {
-            for (final l in tr.chats.values) {
-              for (final m in l) {
-                m.mine ? sent++ : got++;
-              }
+          for (final l in sharedChats.values) {
+            for (final m in l) {
+              m.mine ? sent++ : got++;
             }
           }
           final dev = t.peers.where((p) => p.connected).length;
@@ -118,14 +116,36 @@ extension _ShellParts on _ShellState {
                 Text('@${_me.toLowerCase().replaceAll(' ', '_')}',
                     style: const TextStyle(color: Colors.white54)),
                 const SizedBox(height: 10),
-                const Text('Bitme user ⚡\nChat without internet 💬'),
-                const SizedBox(height: 22),
+                Text(_bio.isEmpty ? 'Add a short bio in Edit Profile' : _bio,
+                    style: TextStyle(
+                        fontSize: 15,
+                        color: _bio.isEmpty ? Colors.white38 : Colors.white)),
+                const SizedBox(height: 20),
                 Row(children: [
                   stat('$sent', 'Sent'),
                   stat('$got', 'Received'),
                   stat('$dev', 'Connected'),
                 ]),
-                const SizedBox(height: 22),
+                const SizedBox(height: 20),
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(16),
+                  decoration: BoxDecoration(
+                      color: kCard, borderRadius: BorderRadius.circular(16)),
+                  child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                    const Text('About',
+                        style: TextStyle(fontWeight: FontWeight.bold, color: Colors.white70)),
+                    const SizedBox(height: 6),
+                    Text(
+                        _about.isEmpty
+                            ? 'Write a longer description about yourself in Edit Profile.'
+                            : _about,
+                        style: TextStyle(
+                            height: 1.4,
+                            color: _about.isEmpty ? Colors.white38 : Colors.white70)),
+                  ]),
+                ),
+                const SizedBox(height: 20),
                 Row(children: [
                   Expanded(
                     child: FilledButton.tonal(
@@ -135,7 +155,7 @@ extension _ShellParts on _ShellState {
                           minimumSize: const Size.fromHeight(48),
                           shape: RoundedRectangleBorder(
                               borderRadius: BorderRadius.circular(14))),
-                      onPressed: _rename,
+                      onPressed: _editProfile,
                       child: const Text('Edit Profile'),
                     ),
                   ),
@@ -215,9 +235,10 @@ extension _ShellParts on _ShellState {
             ListTile(
               leading: Avatar(name: _me, size: 40, image: _avatar),
               title: Text(_me),
-              subtitle: const Text('My username'),
+              subtitle: Text(_bio.isEmpty ? 'Edit profile' : _bio,
+                  maxLines: 1, overflow: TextOverflow.ellipsis),
               trailing: const Icon(Icons.edit, size: 20),
-              onTap: _rename,
+              onTap: _editProfile,
             ),
             ListTile(
               leading: const Icon(Icons.share),

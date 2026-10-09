@@ -146,6 +146,7 @@ class BtTransport extends Transport {
       final name = _found[id] ?? id;
       _links[id] = name;
       _mesh.remove(name); // now a direct neighbour
+      _sendProfile(id);
     } else {
       _links.remove(id);
     }
@@ -265,11 +266,30 @@ class BtTransport extends Transport {
     if (old.isNotEmpty) notifyListeners();
   }
 
-  String _keyFor(String name) {
-    for (final e in _links.entries) {
-      if (e.value == name) return e.key;
+  String _nameOf(String endpointId) => _links[endpointId] ?? _found[endpointId] ?? endpointId;
+
+  String _keyFor(String name) => 'dm:$name';
+
+  void _sendProfile(String endpointId) =>
+      _sendTo(endpointId, {'k': 'p', 'n': _me, ...profileJson()});
+
+  @override
+  void profileChanged() {
+    for (final id in _links.keys.toList()) {
+      _sendProfile(id);
     }
-    return 'mesh:$name';
+  }
+
+  @override
+  void ack(String key, String id, int status) {
+    if (!key.startsWith('dm:')) return;
+    final name = key.substring(3);
+    for (final e in _links.entries) {
+      if (e.value == name) {
+        _sendTo(e.key, {'k': 'a', 'i': id, 's': status});
+        return;
+      }
+    }
   }
 
   void _onPayload(String eid, Payload p) {
@@ -281,12 +301,19 @@ class BtTransport extends Transport {
       if (d is Map) m = d;
     } catch (_) {}
     if (m == null) {
-      addMsg(eid, Msg(raw, false)); // plain text from an older version
+      addMsg('dm:${_nameOf(eid)}', Msg(raw, false)); // plain text from an older version
       return;
     }
     switch (m['k']) {
       case 'm':
-        addMsg(eid, Msg(m['x'] as String, false));
+        receive('dm:${_nameOf(eid)}',
+            Msg(m['x'] as String, false, id: m['i'] as String?));
+        break;
+      case 'a':
+        handleAck('dm:${_nameOf(eid)}', m['i'] as String, m['s'] as int);
+        break;
+      case 'p':
+        storeProfile((m['n'] as String?) ?? _nameOf(eid), m);
         break;
       case 'ann':
         _onAnnounce(eid, m);
@@ -339,7 +366,8 @@ class BtTransport extends Transport {
 
   @override
   void send(Peer p, String text) {
-    addMsg(p.id, Msg(text, true));
+    final msg = Msg(text, true, id: newId());
+    addMsg(p.key, msg);
     if (p.id.startsWith('mesh:')) {
       final id = _newId();
       _markSeen(id);
@@ -352,7 +380,7 @@ class BtTransport extends Transport {
         'ttl': _ttl,
       });
     } else {
-      _sendTo(p.id, {'k': 'm', 'x': text});
+      _sendTo(p.id, {'k': 'm', 'i': msg.id, 'x': text});
     }
   }
 }

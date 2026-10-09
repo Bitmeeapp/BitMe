@@ -14,11 +14,44 @@ class ChatScreen extends StatefulWidget {
 class _ChatScreenState extends State<ChatScreen> {
   final _c = TextEditingController();
 
+  String get _key => widget.peer.key;
+  bool get _isGroup => widget.peer.id.startsWith('group:');
+
   @override
   void initState() {
     super.initState();
-    widget.t.openId = widget.peer.id;
-    widget.t.unread.remove(widget.peer.id);
+    widget.t.openId = _key;
+    widget.t.unread.remove(_key);
+    widget.t.markRead(_key);
+  }
+
+  void _showProfile() {
+    if (_isGroup) return;
+    final prof = widget.t.profiles[widget.peer.name];
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: kCard,
+      builder: (_) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: Column(mainAxisSize: MainAxisSize.min, children: [
+            Avatar(name: widget.peer.name, size: 96, image: prof?.image),
+            const SizedBox(height: 12),
+            Text(widget.peer.name,
+                style: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold)),
+            const SizedBox(height: 6),
+            Text((prof?.bio ?? '').isEmpty ? 'No bio yet' : prof!.bio,
+                style: const TextStyle(color: Colors.white70)),
+            if ((prof?.about ?? '').isNotEmpty) ...[
+              const SizedBox(height: 14),
+              Align(
+                  alignment: Alignment.centerLeft,
+                  child: Text(prof!.about, style: const TextStyle(height: 1.4))),
+            ],
+          ]),
+        ),
+      ),
+    );
   }
 
   @override
@@ -44,14 +77,37 @@ class _ChatScreenState extends State<ChatScreen> {
   Widget build(BuildContext context) => Scaffold(
         appBar: AppBar(
           titleSpacing: 0,
+          actions: [
+            PopupMenuButton<String>(
+              onSelected: (v) {
+                if (v == 'profile') _showProfile();
+                if (v == 'clear') {
+                  widget.t.chats.remove(_key);
+                  widget.t.onChanged?.call();
+                  widget.t.refresh();
+                }
+              },
+              itemBuilder: (_) => [
+                if (!_isGroup)
+                  const PopupMenuItem(value: 'profile', child: Text('View profile')),
+                const PopupMenuItem(value: 'clear', child: Text('Clear chat')),
+              ],
+            ),
+          ],
           title: ListenableBuilder(
             listenable: widget.t,
             builder: (_, __) {
               final on = widget.t.isOnline(widget.peer.id);
               final isGroup = widget.peer.id.startsWith('group:');
               final isMesh = widget.peer.id.startsWith('mesh:');
-              return Row(children: [
-                Avatar(name: widget.peer.name, size: 40, group: isGroup),
+              return GestureDetector(
+                  onTap: _showProfile,
+                  child: Row(children: [
+                Avatar(
+                    name: widget.peer.name,
+                    size: 40,
+                    group: isGroup,
+                    image: isGroup ? null : widget.t.avatarOf(widget.peer.name)),
                 const SizedBox(width: 12),
                 Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
                   Text(widget.peer.name,
@@ -69,7 +125,7 @@ class _ChatScreenState extends State<ChatScreen> {
                           style: const TextStyle(fontSize: 12, color: Colors.white60)),
                     ]),
                 ])),
-              ]);
+              ]));
             },
           ),
         ),
@@ -78,7 +134,7 @@ class _ChatScreenState extends State<ChatScreen> {
             child: ListenableBuilder(
               listenable: widget.t,
               builder: (_, __) {
-                final msgs = (widget.t.chats[widget.peer.id] ?? []).reversed.toList();
+                final msgs = (widget.t.chats[_key] ?? []).reversed.toList();
                 final maxW = MediaQuery.of(context).size.width * .72;
                 return ListView.builder(
                   reverse: true,
@@ -119,7 +175,11 @@ class _ChatScreenState extends State<ChatScreen> {
                                   style: const TextStyle(fontSize: 11, color: Colors.white60)),
                               if (m.mine) ...[
                                 const SizedBox(width: 4),
-                                const Icon(Icons.done, size: 14, color: Colors.white70),
+                                Icon(m.status >= 2 ? Icons.done_all : Icons.done,
+                                    size: 14,
+                                    color: m.status >= 3
+                                        ? Colors.cyanAccent
+                                        : Colors.white70),
                               ],
                             ]),
                           ]),
@@ -133,7 +193,10 @@ class _ChatScreenState extends State<ChatScreen> {
                         crossAxisAlignment: CrossAxisAlignment.end,
                         children: [
                           if (!m.mine) ...[
-                            Avatar(name: m.sender ?? widget.peer.name, size: 30),
+                            Avatar(
+                                name: m.sender ?? widget.peer.name,
+                                size: 30,
+                                image: widget.t.avatarOf(m.sender ?? widget.peer.name)),
                             const SizedBox(width: 8),
                           ],
                           bubble,
