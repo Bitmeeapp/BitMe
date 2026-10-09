@@ -210,6 +210,21 @@ jobs:
             echo "::error::APK is NOT signed with the stable key (updates would need uninstall)"
             exit 1
           fi
+      - name: Show APK info (package name, version, signing fingerprints)
+        run: |
+          APK=build/app/outputs/flutter-apk/app-release.apk
+          BT=$(ls -d $ANDROID_HOME/build-tools/* 2>/dev/null | sort -V | tail -1)
+          {
+            echo "## APK info"
+            echo ""
+            if [ -x "$BT/aapt2" ]; then
+              "$BT/aapt2" dump badging "$APK" | grep -E "^package:|application-label:" | head -3 | sed 's/^/    /' || true
+            fi
+            if [ -x "$BT/apksigner" ]; then
+              echo ""
+              "$BT/apksigner" verify --print-certs "$APK" | grep -E "SHA-(1|256) digest" | head -2 | sed 's/^/    /' || true
+            fi
+          } | tee -a "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@v4
         with:
           name: BitMee-apk
