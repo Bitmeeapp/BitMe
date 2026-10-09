@@ -227,7 +227,7 @@ extension _ShellParts on _ShellState {
                     borderRadius: BorderRadius.circular(18),
                     child: Image.asset('assets/icon.png', width: 72)),
                 const SizedBox(height: 12),
-                const Text('Bitme',
+                const Text('BitMee',
                     style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold)),
               ]),
             ),
@@ -245,7 +245,7 @@ extension _ShellParts on _ShellState {
               title: const Text('Share app'),
               onTap: () {
                 _sk.currentState?.closeEndDrawer();
-                Share.share('Bitme: chat without internet, over Bluetooth or WiFi. Download: $kShareLink');
+                Share.share('BitMee: chat without internet, over Bluetooth or WiFi. Download: $kShareLink');
               },
             ),
             SwitchListTile(

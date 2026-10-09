@@ -10,7 +10,7 @@ class BitmeApp extends StatelessWidget {
   const BitmeApp({super.key});
   @override
   Widget build(BuildContext context) => MaterialApp(
-        title: 'Bitme',
+        title: 'BitMee',
         debugShowCheckedModeBanner: false,
         theme: ThemeData(
           useMaterial3: true,
@@ -92,7 +92,7 @@ class _WelcomeScreenState extends State<WelcomeScreen> {
                     borderRadius: BorderRadius.circular(28),
                     child: Image.asset('assets/icon.png', width: 120)),
                 const SizedBox(height: 22),
-                const Text('Bitme',
+                const Text('BitMee',
                     style: TextStyle(fontSize: 40, fontWeight: FontWeight.bold)),
                 const SizedBox(height: 8),
                 const Text('Connect  •  Chat  •  Share  •  Be You',

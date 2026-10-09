@@ -147,7 +147,7 @@ class DonateScreen extends StatelessWidget {
           child: SingleChildScrollView(
             padding: const EdgeInsets.all(24),
             child: Column(children: [
-              const Text('Bitme is free ❤️',
+              const Text('BitMee is free ❤️',
                   style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold)),
               const SizedBox(height: 8),
               const Text('If you like the app, you can support it.\nScan the QR code to donate.',

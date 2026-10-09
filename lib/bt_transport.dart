@@ -70,14 +70,14 @@ class BtTransport extends Transport {
       ].request();
       if (!await Permission.location.isGranted) {
         error = 'Location permission is required for Bluetooth.\n\n'
-            'Tap "Open app settings" → Permissions → Location → Allow. Bitme will retry when you come back.';
+            'Tap "Open app settings" → Permissions → Location → Allow. BitMee will retry when you come back.';
         needSettings = true;
         notifyListeners();
         return false;
       }
       if (!await Permission.location.serviceStatus.isEnabled) {
         error = 'Location is turned off.\n\n'
-            'Bluetooth search needs Location ON. Tap "Turn on Location", switch it on and come back. Bitme will retry automatically.';
+            'Bluetooth search needs Location ON. Tap "Turn on Location", switch it on and come back. BitMee will retry automatically.';
         needLocation = true;
         notifyListeners();
         return false;

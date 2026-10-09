@@ -190,7 +190,7 @@ class _ShellState extends State<Shell> with WidgetsBindingObserver {
     if (!p.connected && !offline) {
       _snack('Connecting to ${p.name}...');
       final ok = await t.connect(p);
-      if (!ok) return _snack('Could not connect. Keep both phones close, Bluetooth + Location ON, Bitme open on both.');
+      if (!ok) return _snack('Could not connect. Keep both phones close, Bluetooth + Location ON, BitMee open on both.');
     }
     if (!mounted) return;
     Navigator.push(
@@ -206,7 +206,7 @@ class _ShellState extends State<Shell> with WidgetsBindingObserver {
     if (name == null || name.isEmpty) return;
     final hit = t.peers.where((p) => p.name.toLowerCase() == name.toLowerCase());
     if (hit.isEmpty) {
-      _snack('"$name" not found. Bitme must be open on the other phone.');
+      _snack('"$name" not found. BitMee must be open on the other phone.');
     } else {
       _open(hit.first);
     }
@@ -229,7 +229,7 @@ class _ShellState extends State<Shell> with WidgetsBindingObserver {
       final c = HttpClient()..connectionTimeout = const Duration(seconds: 10);
       final req = await c
           .getUrl(Uri.parse('https://api.github.com/repos/$kRepo/releases/latest'));
-      req.headers.set('User-Agent', 'Bitme');
+      req.headers.set('User-Agent', 'BitMee');
       final res = await req.close();
       if (!mounted) return;
       if (res.statusCode == 404) {
@@ -251,7 +251,7 @@ class _ShellState extends State<Shell> with WidgetsBindingObserver {
         context: context,
         builder: (_) => AlertDialog(
           title: const Text('Update available'),
-          content: Text('Bitme version 1.0.$n is available. Download it now?'),
+          content: Text('BitMee version 1.0.$n is available. Download it now?'),
           actions: [
             TextButton(
                 onPressed: () => Navigator.pop(context, false),
@@ -353,8 +353,8 @@ class _ShellState extends State<Shell> with WidgetsBindingObserver {
                   const SizedBox(height: 16),
                   Text(
                       _mode == Mode.wifi
-                          ? 'Looking for phones on this WiFi...\nOpen Bitme on the other phone too.\nTap + to create a group.'
-                          : 'Looking for nearby phones...\nOpen Bitme on the other phone too.',
+                          ? 'Looking for phones on this WiFi...\nOpen BitMee on the other phone too.\nTap + to create a group.'
+                          : 'Looking for nearby phones...\nOpen BitMee on the other phone too.',
                       textAlign: TextAlign.center,
                       style: const TextStyle(color: Colors.white70)),
                 ]),
