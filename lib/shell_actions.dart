@@ -237,6 +237,14 @@ extension _ShellActions on _ShellState {
       builder: (_) => SafeArea(
         child: Column(mainAxisSize: MainAxisSize.min, children: [
           ListTile(
+            leading: const Icon(Icons.photo_camera),
+            title: const Text('Take a photo'),
+            onTap: () {
+              Navigator.pop(context);
+              _pickAvatar(ImageSource.camera);
+            },
+          ),
+          ListTile(
             leading: const Icon(Icons.photo_library),
             title: const Text('Choose from gallery'),
             onTap: () {

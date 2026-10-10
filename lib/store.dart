@@ -20,14 +20,26 @@ class ChatStore {
       data.forEach((k, v) {
         final old = (v as List).map((e) {
           final l = e as List;
+          final kind = l.length > 6 ? l[6] as String? : null;
+          final file = l.length > 7 ? l[7] as String? : null;
           return Msg(l[0] as String, l[1] == 1,
               sender: l[3] as String?,
               id: l[4] as String?,
               status: l[5] as int,
-              at: DateTime.fromMillisecondsSinceEpoch(l[2] as int));
+              at: DateTime.fromMillisecondsSinceEpoch(l[2] as int),
+              kind: kind,
+              file: file,
+              size: l.length > 8 ? l[8] as int : 0,
+              progress: (kind != null && file == null) ? 0 : 1,
+              failed: kind != null && file == null);
         }).toList();
         final key = k as String;
         sharedChats[key] = [...old, ...(sharedChats[key] ?? <Msg>[])];
+        for (final m in old) {
+          if (m.mine && m.status == 0 && m.kind == null) {
+            (sharedOutbox[key] ??= []).add(m); // still waiting to be sent
+          }
+        }
       });
     } catch (_) {}
   }
@@ -50,6 +62,9 @@ class ChatStore {
                 m.sender,
                 m.id,
                 m.status,
+                m.kind,
+                m.file,
+                m.size,
               ])
           .toList();
     });

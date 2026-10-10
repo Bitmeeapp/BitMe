@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 import 'dart:math';
 import 'dart:typed_data';
 
@@ -7,6 +8,8 @@ import 'package:nearby_connections/nearby_connections.dart';
 import 'package:permission_handler/permission_handler.dart';
 
 import 'transport.dart';
+
+part 'bt_media.dart';
 
 /// Bluetooth (Google Nearby Connections, Android) with optional mesh relay.
 ///
@@ -16,11 +19,16 @@ import 'transport.dart';
 class BtTransport extends Transport {
   static const _svc = 'com.bitme.chat';
   static const _ttl = 6;
+  static const _chunk = 30000; // bytes of a file per message (limit is 32 KB)
 
   final _found = <String, String>{}; // endpointId -> name (seen nearby)
   final _links = <String, String>{}; // endpointId -> name (connected)
   final _pending = <String, Completer<bool>>{};
   final _mesh = <String, DateTime>{}; // name -> last announcement
+  final _wanted = <String>{}; // people we were connected to: reconnect on our own
+  final _foundAt = <String, DateTime>{}; // when an endpoint was first seen
+  final _fails = <String, int>{}; // failed automatic connection attempts
+  final _incoming = <String, _In>{}; // files being received
   final _seenList = <String>[];
   final _seenSet = <String>{};
   final _rnd = Random();
@@ -82,14 +90,10 @@ class BtTransport extends Transport {
         notifyListeners();
         return false;
       }
-      await Nearby().startAdvertising(me, Strategy.P2P_CLUSTER,
-          onConnectionInitiated: _init,
-          onConnectionResult: _result,
-          onDisconnected: _disc,
-          serviceId: _svc);
+      await _startAdvertising();
       await _startDiscovery();
       _timer?.cancel();
-      _timer = Timer.periodic(const Duration(seconds: 8), (_) => _tick());
+      _timer = Timer.periodic(const Duration(seconds: 4), (_) => _tick());
       return true;
     } catch (e) {
       final m = e.toString();
@@ -98,6 +102,10 @@ class BtTransport extends Transport {
             'Open app settings and allow Location and Nearby devices, then come back.';
         needSettings = true;
         needLocation = m.contains('LOCATION');
+      } else if (m.contains('8007') || m.contains('BLUETOOTH_ERROR')) {
+        error = 'Bluetooth is turned off.\n\n'
+            'Turn Bluetooth on and come back. BitMee will retry automatically.';
+        needBluetooth = true;
       } else {
         error = 'Could not start Bluetooth: $e';
       }
@@ -106,14 +114,40 @@ class BtTransport extends Transport {
     }
   }
 
+  Future<void> _startAdvertising() =>
+      Nearby().startAdvertising(_me, Strategy.P2P_CLUSTER,
+          onConnectionInitiated: _init,
+          onConnectionResult: _result,
+          onDisconnected: _disc,
+          serviceId: _svc);
+
+  @override
+  Future<void> refreshRadio() async {
+    if (_me.isEmpty) return;
+    try {
+      await Nearby().stopAdvertising();
+    } catch (_) {}
+    try {
+      await Nearby().stopDiscovery();
+    } catch (_) {}
+    _found.removeWhere((id, _) => !_links.containsKey(id));
+    notifyListeners();
+    try {
+      await _startAdvertising();
+      await _startDiscovery();
+    } catch (_) {}
+  }
+
   Future<void> _startDiscovery() => Nearby().startDiscovery(
       _me, Strategy.P2P_CLUSTER,
       onEndpointFound: (id, name, _) {
         _found[id] = name;
+        _foundAt.putIfAbsent(id, () => DateTime.now());
         notifyListeners();
       },
       onEndpointLost: (id) {
         _found.remove(id);
+        _foundAt.remove(id);
         notifyListeners();
       },
       serviceId: _svc);
@@ -121,10 +155,15 @@ class BtTransport extends Transport {
   @override
   Future<void> stop() async {
     _timer?.cancel();
+    _timer = null;
+    _foundAt.clear();
+    _fails.clear();
     _found.clear();
     _links.clear();
     _mesh.clear();
     _pending.clear();
+    _incoming.clear();
+    statusText = null;
     try {
       await Nearby().stopAdvertising();
       await Nearby().stopDiscovery();
@@ -146,7 +185,10 @@ class BtTransport extends Transport {
       final name = _found[id] ?? id;
       _links[id] = name;
       _mesh.remove(name); // now a direct neighbour
+      _wanted.add(name);
       _sendProfile(id);
+      flushOutbox(name); // messages written while they were away
+      if (statusText != null && statusText!.contains(name)) statusText = null;
     } else {
       _links.remove(id);
     }
@@ -156,14 +198,51 @@ class BtTransport extends Transport {
   }
 
   void _disc(String id) {
-    _links.remove(id);
+    final name = _links.remove(id);
+    for (final e in _incoming.entries.toList()) {
+      if (e.value.eid == id) {
+        e.value.msg.failed = true;
+        _incoming.remove(e.key);
+      }
+    }
     notifyListeners();
+    if (name != null && _timer != null) _scheduleReconnect(name);
+  }
+
+  /// The link dropped: scan again at once and reconnect without waiting.
+  void _scheduleReconnect(String name) {
+    final label = 'Reconnecting to $name...';
+    statusText = label;
+    notifyListeners();
+    Future.delayed(const Duration(milliseconds: 1500), () async {
+      if (_timer == null || _links.containsValue(name)) return;
+      await refreshRadio(); // the other phone may have a new id now
+      _tick();
+    });
+    Future.delayed(const Duration(seconds: 30), () {
+      if (statusText == label) {
+        statusText = null;
+        notifyListeners();
+      }
+    });
+  }
+
+  @override
+  void deliverQueued(String name, Msg m) {
+    for (final e in _links.entries) {
+      if (e.value == name) {
+        _sendTo(e.key, {'k': 'm', 'i': m.id, 'x': m.text});
+        return;
+      }
+    }
   }
 
   @override
   Future<bool> connect(Peer p) async {
     if (p.connected) return true;
     for (var attempt = 0; attempt < 3; attempt++) {
+      statusText = 'Connecting to ${p.name} (try ${attempt + 1}/3)...';
+      notifyListeners();
       final c = Completer<bool>();
       _pending[p.id] = c;
       // Searching while connecting keeps the radio busy; pause it.
@@ -187,6 +266,7 @@ class BtTransport extends Transport {
       }
       _pending.remove(p.id);
       if (ok) {
+        statusText = null;
         try {
           await _startDiscovery();
         } catch (_) {}
@@ -198,6 +278,8 @@ class BtTransport extends Transport {
       } catch (_) {}
       await Future.delayed(const Duration(milliseconds: 1500));
     }
+    statusText = null;
+    notifyListeners();
     try {
       await _startDiscovery();
     } catch (_) {}
@@ -210,14 +292,29 @@ class BtTransport extends Transport {
     if (_links.containsKey(id) || _pending.containsKey(id)) return;
     final c = Completer<bool>();
     _pending[id] = c;
+    var ok = false;
     try {
       await Nearby().requestConnection(_me, id,
           onConnectionInitiated: _init,
           onConnectionResult: _result,
           onDisconnected: _disc);
-      await c.future.timeout(const Duration(seconds: 15), onTimeout: () => false);
+      ok = await c.future
+          .timeout(const Duration(seconds: 15), onTimeout: () => false);
     } catch (_) {}
     _pending.remove(id);
+    if (ok) {
+      _fails.remove(id);
+      return;
+    }
+    final n = (_fails[id] ?? 0) + 1;
+    _fails[id] = n;
+    try {
+      await Nearby().disconnectFromEndpoint(id);
+    } catch (_) {}
+    if (n >= 2) {
+      _fails.remove(id);
+      await refreshRadio(); // the saved id is probably old
+    }
   }
 
   // ------------------------------------------------------------------- mesh
@@ -244,14 +341,22 @@ class BtTransport extends Transport {
   }
 
   void _tick() {
-    if (!meshEnabled || _me.isEmpty) return;
-    for (final e in _found.entries) {
-      if (!_links.containsKey(e.key) &&
-          !_pending.containsKey(e.key) &&
-          _me.compareTo(e.value) < 0) {
-        _autoConnect(e.key);
-      }
+    if (_me.isEmpty) return;
+    final t0 = DateTime.now();
+    for (final e in _found.entries.toList()) {
+      final id = e.key;
+      final name = e.value;
+      if (_links.containsKey(id) || _pending.containsKey(id)) continue;
+      final known = meshEnabled ||
+          _wanted.contains(name) ||
+          sharedChats.containsKey('dm:$name'); // someone we talked to before
+      if (!known) continue;
+      // The phone with the smaller name calls first. The other one joins in
+      // after 10 seconds, so it still works if the first phone is asleep.
+      final waited = t0.difference(_foundAt[id] ?? t0).inSeconds;
+      if (_me.compareTo(name) < 0 || waited >= 10) _autoConnect(id);
     }
+    if (!meshEnabled) return;
     final id = _newId();
     _markSeen(id);
     _flood({'k': 'ann', 'id': id, 'from': _me, 'ttl': _ttl});
@@ -294,7 +399,12 @@ class BtTransport extends Transport {
 
   void _onPayload(String eid, Payload p) {
     if (p.type != PayloadType.BYTES || p.bytes == null) return;
-    final raw = utf8.decode(p.bytes!);
+    final bytes = p.bytes!;
+    if (bytes.isNotEmpty && bytes[0] == 1) {
+      _onChunk(bytes); // a piece of a photo / video
+      return;
+    }
+    final raw = utf8.decode(bytes);
     Map? m;
     try {
       final d = jsonDecode(raw);
@@ -314,6 +424,9 @@ class BtTransport extends Transport {
         break;
       case 'p':
         storeProfile((m['n'] as String?) ?? _nameOf(eid), m);
+        break;
+      case 'fh':
+        _startIncoming(eid, m);
         break;
       case 'ann':
         _onAnnounce(eid, m);
@@ -360,6 +473,33 @@ class BtTransport extends Transport {
         'ttl': ttl,
       }, except: eid);
     }
+  }
+
+  // ------------------------------------------------------- photos & videos
+
+  @override
+  Future<String?> sendMedia(Peer p, String path, String kind) async {
+    if (!_links.containsKey(p.id)) {
+      return '${p.name} is not directly connected';
+    }
+    final size = await File(path).length();
+    if (size > kMaxMedia) return 'File is too big (max 30 MB)';
+    final f = await stageFile(path);
+    final fid = newId();
+    final total = (size + _chunk - 1) ~/ _chunk;
+    final m = Msg(mediaLabel(kind), true,
+        id: fid, kind: kind, file: f.path, size: size, progress: 0);
+    addMsg(p.key, m);
+    _sendTo(p.id, {
+      'k': 'fh',
+      'i': fid,
+      'kind': kind,
+      'name': f.path.split('/').last,
+      'size': size,
+      'n': total,
+    });
+    _pump(p.id, f, fid, total, m);
+    return null;
   }
 
   // ------------------------------------------------------------------- send

@@ -16,13 +16,14 @@ const _sections = <_Sec>[
   ]),
   _Sec(r'''2. What BitMee stores on your phone''', [
     r'''- Your username, bio, About text and profile picture (plus a small 64x64 copy of the picture).''',
-    r'''- Your chats (up to the last 200 messages in each chat), their delivery/read status, the groups you joined, and your app settings.''',
+    r'''- Your chats (up to the last 200 messages in each chat), their delivery/read status, the photos and videos you send or receive, the groups you joined, and your app settings.''',
     r'''This data is kept in BitMee's private storage on your phone. We cannot see it.''',
   ]),
   _Sec(r'''3. What is shared with other people''', [
     r'''When you connect or chat with someone nearby, BitMee sends the following directly to their phone:''',
     r'''- your username, bio, About text and the small profile picture;''',
     r'''- the messages you send, and delivery/read confirmations;''',
+    r'''- the photos and videos you choose to send in a one-to-one chat;''',
     r'''- in WiFi mode: your username and the names of groups you joined are broadcast on the local WiFi network every few seconds so that others can find you;''',
     r'''- in Mesh relay mode: your username is announced to nearby phones, and messages may pass through other people's phones on their way to the receiver.''',
     r'''This is the purpose of the app. This data goes only to other devices, never to servers owned by us.''',
@@ -38,7 +39,7 @@ const _sections = <_Sec>[
     r'''- Location: Android requires this permission to discover nearby devices. BitMee does not collect, store or send your location.''',
     r'''- WiFi and network state: to find phones on the same WiFi network.''',
     r'''- Notifications: to alert you about new messages.''',
-    r'''- Photos: only the picture you choose as your profile photo, through the system picker.''',
+    r'''- Camera and photos: only the pictures and videos you take or choose to send in a chat, or use as your profile photo, through the system camera and picker. A photo or video is saved to your gallery only when you tap Save.''',
     r'''- Internet: used only when you tap "Update app", to check for and download updates from GitHub.''',
   ]),
   _Sec(r'''6. Features that use other services''', [
@@ -52,7 +53,7 @@ const _sections = <_Sec>[
     r'''BitMee has no advertising, analytics, crash-reporting or tracking tools.''',
   ]),
   _Sec(r'''8. Your choices and deleting your data''', [
-    r'''- Open a chat, tap the three dots and choose "Clear chat" to delete it from your phone.''',
+    r'''- Open a chat, tap the three dots and choose "Clear chat" to delete it, including its photos and videos, from your phone.''',
     r'''- Press and hold a group in the Messages list to leave it.''',
     r'''- Change or remove your profile photo, bio and About in the Profile tab.''',
     r'''- Uninstalling BitMee, or going to Settings > Apps > BitMee > Storage > Clear data, removes everything BitMee stored on your phone.''',

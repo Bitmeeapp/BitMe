@@ -1,5 +1,9 @@
-import 'package:flutter/material.dart';
+import 'dart:io';
 
+import 'package:flutter/material.dart';
+import 'package:image_picker/image_picker.dart';
+
+import 'media.dart';
 import 'transport.dart';
 import 'ui.dart';
 
@@ -23,6 +27,67 @@ class _ChatScreenState extends State<ChatScreen> {
     widget.t.openId = _key;
     widget.t.unread.remove(_key);
     widget.t.markRead(_key);
+  }
+
+  void _attachMenu() {
+    if (_isGroup) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text('Photos and videos can only be sent in a one-to-one chat')));
+      return;
+    }
+    void choose(ImageSource s, bool video) {
+      Navigator.pop(context);
+      _pick(s, video);
+    }
+
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: kCard,
+      builder: (_) => SafeArea(
+        child: Column(mainAxisSize: MainAxisSize.min, children: [
+          ListTile(
+              leading: const Icon(Icons.photo_camera),
+              title: const Text('Take a photo'),
+              onTap: () => choose(ImageSource.camera, false)),
+          ListTile(
+              leading: const Icon(Icons.videocam),
+              title: const Text('Record a video'),
+              onTap: () => choose(ImageSource.camera, true)),
+          ListTile(
+              leading: const Icon(Icons.photo_library),
+              title: const Text('Photo from gallery'),
+              onTap: () => choose(ImageSource.gallery, false)),
+          ListTile(
+              leading: const Icon(Icons.video_library),
+              title: const Text('Video from gallery'),
+              onTap: () => choose(ImageSource.gallery, true)),
+        ]),
+      ),
+    );
+  }
+
+  Future<void> _pick(ImageSource source, bool video) async {
+    final messenger = ScaffoldMessenger.of(context);
+    try {
+      final picker = ImagePicker();
+      final x = video
+          ? await picker.pickVideo(
+              source: source, maxDuration: const Duration(seconds: 60))
+          : await picker.pickImage(
+              source: source, maxWidth: 1600, imageQuality: 85);
+      if (x == null) return;
+      if (!widget.t.isOnline(widget.peer.id)) {
+        messenger.showSnackBar(
+            SnackBar(content: Text('${widget.peer.name} is offline')));
+        return;
+      }
+      final err = await widget.t
+          .sendMedia(widget.peer, x.path, video ? 'video' : 'image');
+      if (err != null) messenger.showSnackBar(SnackBar(content: Text(err)));
+    } catch (_) {
+      messenger.showSnackBar(const SnackBar(
+          content: Text('Could not open the camera / gallery')));
+    }
   }
 
   void _showProfile() {
@@ -65,8 +130,14 @@ class _ChatScreenState extends State<ChatScreen> {
     final s = _c.text.trim();
     if (s.isEmpty) return;
     if (!widget.t.isOnline(widget.peer.id)) {
-      ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('${widget.peer.name} is offline')));
+      if (_isGroup) {
+        ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('${widget.peer.name} is offline')));
+        return;
+      }
+      // The person is away: keep the message and send it when they are back.
+      widget.t.queue(widget.peer, s);
+      _c.clear();
       return;
     }
     widget.t.send(widget.peer, s);
@@ -82,7 +153,16 @@ class _ChatScreenState extends State<ChatScreen> {
               onSelected: (v) {
                 if (v == 'profile') _showProfile();
                 if (v == 'clear') {
+                  for (final m in widget.t.chats[_key] ?? <Msg>[]) {
+                    final f = m.file;
+                    if (f != null) {
+                      try {
+                        File(f).deleteSync();
+                      } catch (_) {}
+                    }
+                  }
                   widget.t.chats.remove(_key);
+                  widget.t.outbox.remove(_key);
                   widget.t.onChanged?.call();
                   widget.t.refresh();
                 }
@@ -166,16 +246,19 @@ class _ChatScreenState extends State<ChatScreen> {
                                             fontWeight: FontWeight.bold,
                                             color: Colors.lightBlueAccent)),
                                   )),
-                            Align(
-                                alignment: Alignment.centerLeft,
-                                child: Text(m.text, style: const TextStyle(fontSize: 16))),
+                            if (m.kind != null)
+                              MediaBubble(m)
+                            else
+                              Align(
+                                  alignment: Alignment.centerLeft,
+                                  child: Text(m.text, style: const TextStyle(fontSize: 16))),
                             const SizedBox(height: 3),
                             Row(mainAxisSize: MainAxisSize.min, children: [
                               Text(fmtTime(m.at),
                                   style: const TextStyle(fontSize: 11, color: Colors.white60)),
                               if (m.mine) ...[
                                 const SizedBox(width: 4),
-                                Icon(m.status >= 2 ? Icons.done_all : Icons.done,
+                                Icon(m.status == 0 ? Icons.schedule : (m.status >= 2 ? Icons.done_all : Icons.done),
                                     size: 14,
                                     color: m.status >= 3
                                         ? Colors.cyanAccent
@@ -213,6 +296,10 @@ class _ChatScreenState extends State<ChatScreen> {
             child: Padding(
               padding: const EdgeInsets.fromLTRB(12, 6, 12, 10),
               child: Row(children: [
+                IconButton(
+                    tooltip: 'Photo / video',
+                    icon: const Icon(Icons.attach_file),
+                    onPressed: _attachMenu),
                 Expanded(
                   child: TextField(
                     controller: _c,
