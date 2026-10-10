@@ -42,6 +42,18 @@ jobs:
           need chat.dart "markRead"
           need main.dart "BitMee"
           need privacy.dart "class PrivacyScreen"
+          need media.dart "class MediaScreen"
+          need wifi_transport.dart "class WifiTransport"
+          need bt_media.dart "class _In"
+          need shell_extra.dart "_checkUpdate"
+          need transport.dart "mediaDone"
+          need chat.dart "MediaBubble"
+          need bt_transport.dart "refreshRadio"
+          need store.dart "kind"
+          need transport.dart "flushOutbox"
+          need bt_transport.dart "_scheduleReconnect"
+          need wifi_transport.dart "_bind"
+          need chat.dart "queue("
           need shell_parts.dart "Privacy policy"
           need ui.dart "BitMee"
           need shell.dart "BitMee"
@@ -50,7 +62,7 @@ jobs:
           need bt_transport.dart "_sendProfile"
           need shell.dart "_setProfile"
           need shell_parts.dart "Edit Profile"
-          for dep in flutter_local_notifications image_picker android_intent_plus share_plus url_launcher permission_handler nearby_connections shared_preferences; do
+          for dep in gal path_provider flutter_local_notifications image_picker android_intent_plus share_plus url_launcher permission_handler nearby_connections shared_preferences; do
             if ! grep -q "^  $dep:" pubspec.yaml; then
               echo "::error::pubspec.yaml is an OLD version (missing: $dep). Upload the newest pubspec.yaml (project root)."
               BAD=1
@@ -62,6 +74,10 @@ jobs:
               BAD=1
             fi
           done
+          if grep -q "class WifiTransport" lib/transport.dart; then
+            echo "::error::lib/transport.dart is an OLD version (it still contains WifiTransport). Upload the newest transport.dart."
+            BAD=1
+          fi
           if grep -q "class BtTransport" lib/transport.dart; then
             echo "::error::lib/transport.dart is an OLD version (it still contains BtTransport). Upload the newest transport.dart."
             BAD=1
